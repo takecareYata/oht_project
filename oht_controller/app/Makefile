@@ -22,7 +22,7 @@ WARNFLAGS := -Wall -Wextra -Werror -Wpedantic \
 THREADFLAGS := -pthread
 DEPFLAGS := -MMD -MP
 
-.PHONY: all check clean
+.PHONY: all check test clean
 
 all: $(TARGET)
 
@@ -48,8 +48,19 @@ build/check/%.o: %.c Makefile | build/check
 build/check:
 	mkdir -p $@
 
+# 실물 open/ioctl/시간 함수를 교체한 SPI v2 + 중앙 FSM 통합 시험.
+test: build/test_tsspi build/test_tcp_stop
+	./build/test_tsspi
+	./build/test_tcp_stop
+
+build/test_tsspi: ../test/test_tsspi.c TSspi.c TSspi.h TScontrol.c TScontrol.h main.h TStcp.h TSe84.h Makefile | build
+	$(CC) $(CPPFLAGS) -std=c99 -O1 -g -Wall -Wextra -Werror -pthread -fsanitize=undefined $< -Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=ioctl -Wl,--wrap=clock_gettime -Wl,--wrap=nanosleep -o $@
+
+build/test_tcp_stop: ../test/test_tcp_stop.c TStcp.c TStcp.h TScontrol.h main.h Makefile | build
+	$(CC) $(CPPFLAGS) -DTStcp_DEBUG_ENABLED=0 -std=c99 -O1 -g -Wall -Wextra -Werror -pthread -fsanitize=undefined ../test/test_tcp_stop.c TStcp.c -o $@
+
 # 이 Makefile이 생성한 파일만 삭제한다. 빈 build 디렉터리는 유지한다.
 clean:
-	$(RM) $(TARGET) $(CHECK_TARGET) $(OBJECTS) $(CHECK_OBJECTS) $(DEPFILES)
+	$(RM) $(TARGET) $(CHECK_TARGET) $(OBJECTS) $(CHECK_OBJECTS) $(DEPFILES) build/test_tsspi build/test_tcp_stop
 
 -include $(DEPFILES)

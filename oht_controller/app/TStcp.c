@@ -500,6 +500,31 @@ void TStcp_Get_Command(const TStcp_frame_t * frame)
     TScontrol_Set_Command(frame->payload);
 }
 
+void TStcp_Get_Stop(const TStcp_frame_t * frame)
+{
+    TStcp_context.last_result = TStcp_RESULT_INVALID_ARGUMENT;
+    if (frame == NULL)
+    {
+        return;
+    }
+    if (frame->msgid != TStcp_MSGID_GET_STOP)
+    {
+        return;
+    }
+    if (frame->len != TStcp_PAYLOAD_SIZE)
+    {
+        return;
+    }
+    
+    /* 전용 STOP 메시지이므로 payload로 다른 동작을 선택하지 않는다.
+     * 중앙 FSM이 양축 STOP을 우선 등록하고 일반 SPI 명령 큐를 지운다.
+     * 요청 접수와 실제 정지 확인은 구분하며, 여기서 완료 응답을 보내지 않는다.
+     */
+    TScontrol_Set_Command(main_COMMAND_STOP);
+    TStcp_context.last_result = TStcp_RESULT_OK;
+    TStcp_Debug_Message("TStcp_Get_Stop: queued central STOP\n");
+}
+
 void TStcp_Set_Command_Result(main_command_result_t result)
 {
     TStcp_frame_t response = { 0U, 0U, 0U, 0U, 0U };
@@ -591,6 +616,11 @@ void TStcp_Parse(const TStcp_frame_t * frame)
             case TStcp_MSGID_GET_COMMAND:
             {
                 TStcp_Get_Command(frame);
+                break;
+            }
+            case TStcp_MSGID_GET_STOP:
+            {
+                TStcp_Get_Stop(frame);
                 break;
             }
 

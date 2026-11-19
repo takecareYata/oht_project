@@ -47,6 +47,9 @@
 #define TStcp_MSGID_GET_COMPLETE (0x0014U)
 #define TStcp_MSGID_SET_COMPLETE (0x0015U)
 
+#define TStcp_MSGID_GET_STOP    (0x0020U)
+#define TStcp_MSGID_SET_STOP    (0x0021U)
+
 #define TStcp_MSGID_GET_ALARM   (0xFFFEU)
 #define TStcp_MSGID_SET_ALARM   (0xFFFFU)
 
@@ -130,8 +133,13 @@ void TStcp_LinkTest(const TStcp_frame_t * frame);
 void TStcp_Get_LinkTest(TStcp_frame_t * frame);
 void TStcp_Set_LinkTest(const TStcp_frame_t * frame);
 
-/* GET_COMMAND 메시지 처리 골격. 중앙 FSM 전달은 추후 구현한다. */
+/* GET_COMMAND payload를 중앙 FSM 명령 큐에 전달한다. */
 void TStcp_Get_Command(const TStcp_frame_t * frame);
+
+/* GET_STOP(0x0020), len=4. payload와 관계없이 양축 STOP을 중앙 FSM에 요청한다.
+ * 접수 결과는 기존 SET_COMMAND 알림을 사용하며 실제 정지 완료 응답은 아니다.
+ */
+void TStcp_Get_Stop(const TStcp_frame_t * frame);
 
 /* 명령 수락/거부 결과와 ACK 응답을 준비한다. */
 void TStcp_Set_Command_Result(main_command_result_t result);

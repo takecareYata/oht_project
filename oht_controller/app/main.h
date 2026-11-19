@@ -4,12 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/*
- * 현재 CSU 기능은 구현 전 골격이다. Set 함수는 입력을 보관하거나 장치를 제어하지
- * 않는다. Get 함수는 유효한 출력 포인터에 기본값을 기록하며 NULL은 허용한다.
- * NULL 이외의 포인터는 호출자가 올바른 형식과 수명의 객체로 전달해야 한다.
- * config/status 등의 입력 포인터는 호출이 끝난 후 보관하지 않는다.
- */
+/* CSU 입력 포인터는 호출 중 복사하며 보관하지 않는다. SPI v2는 작업 명령 기반이다. */
 
 /* CSU 사이에서 공유하는 내부 자료형이다. 열거값은 통신 프레임 값이 아니다. */
 typedef enum
@@ -22,7 +17,9 @@ typedef enum
 typedef enum
 {
     main_COMMAND_NONE = 0,
-    main_COMMAND_START
+    main_COMMAND_START,
+    main_COMMAND_STOP,
+    main_COMMAND_RECOVER
 } main_command_t;
 
 typedef enum
@@ -43,7 +40,12 @@ typedef enum
     main_STATE_E84_COMPLETE,
     main_STATE_Z_RETURN,
     main_STATE_COMPLETE,
-    main_STATE_FAULT
+    main_STATE_FAULT,
+    main_STATE_STOPPING,
+    main_STATE_ARMING_Z,
+    main_STATE_ARMING_X,
+    main_STATE_RECOVER_Z,
+    main_STATE_RECOVER_X
 } main_state_t;
 
 typedef enum
@@ -59,13 +61,19 @@ typedef enum
     main_FAULT_INTERLOCK,
     main_FAULT_SPI_COMMUNICATION,
     main_FAULT_E84_HEARTBEAT,
-    main_FAULT_E84_TIMEOUT
+    main_FAULT_E84_TIMEOUT,
+    main_FAULT_STOP
 } main_fault_t;
 
 typedef enum
 {
     main_AXIS_COMMAND_NONE = 0,
-    main_AXIS_COMMAND_MOVE,
+    main_AXIS_COMMAND_ARM,
+    main_AXIS_COMMAND_STOP,
+    main_AXIS_COMMAND_RECOVER,
+    main_AXIS_COMMAND_X_MOVE,
+    main_AXIS_COMMAND_PICK,
+    main_AXIS_COMMAND_PLACE,
     main_AXIS_COMMAND_GET_STATUS
 } main_axis_command_code_t;
 
@@ -83,7 +91,9 @@ typedef enum
     main_AXIS_EVENT_NONE = 0,
     main_AXIS_EVENT_ACK,
     main_AXIS_EVENT_STATUS,
-    main_AXIS_EVENT_COMPLETE
+    main_AXIS_EVENT_COMPLETE,
+    main_AXIS_EVENT_ARMED,
+    main_AXIS_EVENT_STOPPED
 } main_axis_event_t;
 
 typedef enum
@@ -106,8 +116,9 @@ typedef struct
 {
     main_axis_t axis;
     main_axis_command_code_t command;
-    /* 위치 단위와 유효 범위는 STM32 인터페이스 확정 후 정의한다. */
-    int32_t target_position;
+    int32_t target_position; /* v2 현재 명령은 0. 향후 위치 명령용. */
+    uint8_t arg; /* X_MOVE: 정거장 번호 */
+    uint16_t option; /* 현재 0 */
 } main_axis_command_t;
 
 typedef struct
@@ -119,6 +130,17 @@ typedef struct
     main_heartbeat_status_t heartbeat_status;
     uint32_t heartbeat_counter;
     main_fault_t fault;
+    main_axis_command_code_t command; /* ACK/완료가 해당하는 호스트 명령 */
+    uint16_t ack_seq;
+    uint16_t op_seq;
+    uint8_t receipt;
+    uint8_t device_fault;
+    uint8_t sensors;
+    uint8_t relay;
+    uint8_t stage;
+    uint8_t position_source;
+    bool link_valid;
+    bool armed;
 } main_axis_status_t;
 
 typedef struct
@@ -138,7 +160,7 @@ typedef enum
     main_TASK_RESULT_FAILURE
 } main_task_result_t;
 
-/* POSIX 콜백 형식은 MISRA.md의 DEV-VOID-01 및 DEV-PTHREAD-01을 따른다. */
+/* POSIX 콜백 형식은 ../docs/MISRA.md의 DEV-VOID-01 및 DEV-PTHREAD-01을 따른다. */
 typedef void * (*main_task_entry_t)(void * argument);
 
 #endif /* main_H */

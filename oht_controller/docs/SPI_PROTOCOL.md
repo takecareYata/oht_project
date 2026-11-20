@@ -137,3 +137,33 @@ make -C app test
 check는 GCC 정적 분석 빌드이며 프로그램을 실행하지 않는다. test는 [모의 통합 시험](../test/test_tsspi.c)으로 open/close/ioctl/clock_gettime/nanosleep을 교체한다. 실물 장치를 열지 않고 CRC 벡터, 24바이트 인코딩, 예약 필드, 지연 접수, op_seq 불일치, PICK/PLACE, E84 순서, 중복 완료, STOP 우선순위·확인 실패, 수락/작업/Heartbeat 시간초과, CRC·축·짧은 전송·I/O 오류, seq/heartbeat 순환, BOOT·명시적 복구, remote 만료를 확인한다. E84는 정상 모형을 사용한다.
 
 실제 STM32 펌웨어·파형·구동부 검증은 별도이며, 해당 시험 결과는 실물 검증을 대신하지 않는다.
+
+## SPI 디버그 출력
+
+[TSspi.h](../app/TSspi.h)에서 전처리로 제어한다.
+
+| 설정 | 기본값 | 의미 |
+|---|---|---|
+| TSspi_DEBUG_ENABLED | 1 | 초기화·명령·오류 진단 활성화. 0이면 기록/인수 평가/출력 스레드를 전부 제거 |
+| TSspi_DEBUG_FRAMES_ENABLED | 0 | 1이면 각 TX/RX 24바이트 HEX도 기록. DEBUG_ENABLED=1일 때만 적용 |
+
+장치 열기·SPI ioctl 설정 실패(errno), seq 동기화, Heartbeat 정상 전환, 명령 시작/접수/완료, STOP/ARM 확인, MCU 거부·고장·BOOT, 수신 CRC/필드/축 불일치, 응답·Heartbeat·접수·작업 시간초과를 구분한다. 기본 설정에서는 정상 NOP/STATUS를 매번 출력하지 않는다. 잘못된 응답은 기본 설정에서도 24바이트 HEX를 기록한다.
+
+출력은 stderr이며 `TSspi X ...` 또는 `TSspi Z ...`로 축을 구분한다. 모든 숫자는 16진수다. `detail`은 메시지에 따라 errno, 시간 제한(ms), 기대 CRC 또는 수신 축 번호다. cmd/seq는 당시 요청, ack/op/state/receipt/fault/hb는 수신 상태 캐시의 스냅샷이다. 연결 장치는 X=/dev/spidev0.0, Z=/dev/spidev0.1이다.
+
+SPI 태스크에서는 문자열 포맷팅과 write를 하지 않는다. 고정 크기 64개 큐에 trylock으로 기록하며, 잠금 경합 시 즉시 버리고 큐 포화 시 덮어쓰지 않는다. 큐 포화로 버린 개수는 나중에 보고한다. 별도의 분리된 출력 스레드가 최대 16개씩 가져와 잠금을 해제한 뒤 출력하고 100ms 대기한다. stderr 출력이 막혀도 SPI 태스크가 기다리지 않는다. 출력 스레드 생성에 실패하면 진단이 비활성화되고 제어는 계속한다. 출력 스레드는 SIGPIPE를 차단하며 출력 오류는 제어 fault를 바꾸지 않는다.
+
+기본 네 CSU 태스크에 진단용 보조 스레드 하나가 추가된다. 로그는 비동기이므로 TCP 로그와 발생 순서대로 섞여 보이지 않을 수 있다. 활성화 시 큐 복사와 스케줄링 비용은 존재하며, 실물에서 타이밍 영향이 0임을 보장하지 않는다. DEBUG_ENABLED=0에서는 진단 코드가 제거되며, 해당 빌드의 SPI .text가 변경 전과 동일함을 확인했다.
+
+컴파일 옵션을 바꿀 때는 기존 오브젝트가 남지 않도록 재빌드한다.
+
+```sh
+# 모든 SPI 디버그 끄기
+make -B -C app CPPFLAGS="-DTSspi_DEBUG_ENABLED=0"
+# 전체 TX/RX 추적 켜기
+make -B -C app CPPFLAGS="-DTSspi_DEBUG_FRAMES_ENABLED=1"
+# 기본값(핵심 진단만 활성)으로 복귀
+make -B -C app
+```
+
+`make -C app test`는 [진단 큐 시험](../test/test_spi_debug.c)도 실행한다. RX 스냅샷 보존, 큐 경합·포화, 부분 쓰기·EINTR, 출력 차단 중 생산자 진행, 출력 오류 격리를 검사한다. 기존 SPI/FSM 시험도 진단 기록을 활성화하여 실행하며, 실제 출력 스레드나 하드웨어는 시작하지 않는다. 실물 프로그램으로 실행하면 초기 복구 이동이 발생할 수 있다는 기존 조건은 동일하다.

@@ -7,6 +7,7 @@
 - [코드 읽는 순서](CODE_GUIDE.md): 중앙 FSM과 SPI의 주요 함수 및 동작 흐름
 - [SPI 기존·제안 규약 비교](SPI_PROTOCOL_COMPARISON.md): 28바이트 기존 규약과 24바이트 v2의 차이 및 적용 범위
 - [SPI v2 구현 규약](SPI_PROTOCOL.md): 24바이트 프레임, CRC-16, STOP·ARM·RECOVER, 시험과 구현 범위
+- [TSspi 트러블슈팅](SPI_TROUBLESHOOTING.md)에서 양축 `00` 응답, Jetson SPI1 설정, 배선·파형, 고장 복구 절차를 확인할 수 있다.
 - [제안 v2 원문](제안_SPI_PROTOCOL.md): STM32 센서·DMA·작업 FSM 구현 사항
 - [과거 SPI v1 규약](SPI_PROTOCOL_V1.md): 변경 전 28바이트 기록
 - [TCP LinkTest 테스터](TCP_LINK_TEST.md): Python 서버 실행과 요청·응답 형식

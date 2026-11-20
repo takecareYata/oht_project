@@ -277,3 +277,7 @@ gcc -std=c99 -pthread -O2 -Wall -Wextra -Werror -Wpedantic \
   제어 모듈을 대체한 모의 송신에서 LinkTest와 명령 결과 응답의 CRC를 확인했다.
   현재 전체 빌드는 별도 편집 중인 TScontrol.c의 미완성 초기화 식과 함수 선언
   누락으로 실패하며, 해당 사용자 편집 내용은 변경하지 않았다.
+
+## SPI 진단 보조 스레드
+
+[TSspi.c](../app/TSspi.c)의 TSspi_Debug 계열은 DEBUG_ENABLED 전처리로 제외할 수 있다. 진단 구조체는 [TSspi.h](../app/TSspi.h)에 두며 고정 크기 버퍼와 정적 수명 문자열만 사용한다. SPI 생산자는 trylock으로 즉시 반환하고, 보조 소비자는 복사 후 잠금을 풀고 출력한다. POSIX pthread 속성/분리 스레드/시그널 마스크와 write는 플랫폼 의존 검토 대상이다. 동적 메모리를 직접 할당하지 않지만 pthread 구현의 자원·메모리 사용은 외부 라이브러리 범위다. 활성 진단에는 실행 비용이 있으므로 실물 실시간성 검증과 MISRA 전용 검사를 대신하지 않는다.

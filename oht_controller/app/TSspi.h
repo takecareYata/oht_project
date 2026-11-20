@@ -3,6 +3,22 @@
 #include "main.h"
 #include <stddef.h>
 
+/* 0이면 진단 코드/호출/인수 평가와 출력 스레드를 전처리로 제외한다.
+ * 켠 상태에서는 SPI 태스크가 trylock 큐에 기록하고 보조 스레드가 stderr로 출력한다.
+ */
+#ifndef TSspi_DEBUG_ENABLED
+#define TSspi_DEBUG_ENABLED (1)
+#endif
+#ifndef TSspi_DEBUG_FRAMES_ENABLED
+#define TSspi_DEBUG_FRAMES_ENABLED (0)
+#endif
+#if (TSspi_DEBUG_ENABLED != 0) && (TSspi_DEBUG_ENABLED != 1)
+#error "TSspi_DEBUG_ENABLED must be 0 or 1"
+#endif
+#if (TSspi_DEBUG_FRAMES_ENABLED != 0) && (TSspi_DEBUG_FRAMES_ENABLED != 1)
+#error "TSspi_DEBUG_FRAMES_ENABLED must be 0 or 1"
+#endif
+
 /* ==================== 핀맵과 주기 ==================== */
 #define TSspi_AXIS_COUNT (2U)
 #define TSspi_X_AXIS_INDEX (0U)
@@ -40,6 +56,12 @@
 /* STM32 SPI2 DMA 재준비: 모든 프레임 사이 CS HIGH 최소 시간. */
 #define TSspi_RESPONSE_DELAY_US (1000U)
 #define TSspi_FRAME_SIZE (24U)
+#if TSspi_DEBUG_ENABLED
+#define TSspi_DEBUG_QUEUE_SIZE (64U)
+#define TSspi_DEBUG_POLL_US (100000U)
+#define TSspi_DEBUG_BATCH_SIZE (16U)
+#define TSspi_DEBUG_TEXT_SIZE (384U)
+#endif
 #define TSspi_CRC_OFFSET (22U)
 #define TSspi_REQUEST_MAGIC (0xA5U)
 #define TSspi_RESPONSE_MAGIC (0x5AU)
@@ -167,6 +189,25 @@ typedef struct
     uint64_t heartbeat_changed_ms;
     uint32_t heartbeat_timeout_ms;
 } TSspi_snapshot_t;
+
+#if TSspi_DEBUG_ENABLED
+typedef struct
+{
+    const char * message; /* 정적 수명 문자열만 저장한다. */
+    main_axis_t axis;
+    uint32_t detail;
+    uint16_t seq;
+    uint16_t ack_seq;
+    uint16_t op_seq;
+    uint32_t heartbeat;
+    uint8_t cmd;
+    uint8_t state;
+    uint8_t receipt;
+    uint8_t fault;
+    bool has_bytes;
+    uint8_t bytes[TSspi_FRAME_SIZE];
+} TSspi_debug_entry_t;
+#endif
 
 /* Init/Parse/Device_Status는 SPI 태스크 전용. 나머지 큐·캐시 API는 다른 태스크에서도 호출 가능. */
 void * TSspi_Init_Task(void * argument);

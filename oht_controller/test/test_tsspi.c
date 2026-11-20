@@ -191,6 +191,13 @@ static void TSspi_test_reset(void)
 {
     const TSspi_config_t config = { 100U, 1000U, 500U, 30000U, 45000U };
     size_t index;
+#if TSspi_DEBUG_ENABLED
+    /* 실제 출력 스레드 없이 기록 경로만 함께 실행한다. */
+    TSspi_debug_ready = true;
+    TSspi_debug_head = 0U;
+    TSspi_debug_count = 0U;
+    TSspi_debug_dropped = 0U;
+#endif
     memset(TSspi_axes, 0, sizeof(TSspi_axes));
     memset(TSspi_snapshots, 0, sizeof(TSspi_snapshots));
     memset(TSspi_test_reply, 0, sizeof(TSspi_test_reply));

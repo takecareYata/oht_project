@@ -11,6 +11,9 @@
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+#if TSspi_DEBUG_ENABLED
+#include <signal.h>
+#endif
 
 /* ==================== 전용 상태와 공유 큐 ==================== */
 static TSspi_axis_context_t TSspi_axes[TSspi_AXIS_COUNT] = { { .device = -1, .axis = main_AXIS_X }, { .device = -1, .axis = main_AXIS_Z } };
@@ -52,6 +55,252 @@ static uint16_t TSspi_Get_U16(const uint8_t * bytes);
 static void TSspi_Set_U32(uint32_t value, uint8_t * bytes);
 static uint32_t TSspi_Get_U32(const uint8_t * bytes);
 
+/* ==================== 디버그: SPI 태스크는 기록만, 보조 스레드는 출력만 ==================== */
+#if TSspi_DEBUG_ENABLED
+static pthread_mutex_t TSspi_debug_mutex = PTHREAD_MUTEX_INITIALIZER;
+static TSspi_debug_entry_t TSspi_debug_entries[TSspi_DEBUG_QUEUE_SIZE];
+static size_t TSspi_debug_head;
+static size_t TSspi_debug_count;
+static uint32_t TSspi_debug_dropped;
+static bool TSspi_debug_ready; /* SPI 태스크만 읽고 쓴다. */
+
+static void TSspi_Debug_Init(void);
+static void * TSspi_Debug_Task(void * argument);
+static void TSspi_Debug_Event(const TSspi_axis_context_t * axis, const char * message, uint32_t detail, const uint8_t * bytes);
+static bool TSspi_Debug_Get(TSspi_debug_entry_t * entry);
+static void TSspi_Debug_Print(const TSspi_debug_entry_t * entry);
+static void TSspi_Debug_Text(char * text, size_t * length, const char * value);
+static void TSspi_Debug_Value(char * text, size_t * length, const char * label, uint32_t value);
+static void TSspi_Debug_Write(const char * text, size_t length);
+
+static void TSspi_Debug_Init(void)
+{
+    pthread_attr_t attributes;
+    pthread_t thread;
+    int result;
+    if (pthread_attr_init(&attributes) != 0)
+    {
+        return;
+    }
+    result = pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+    if (result == 0)
+    {
+        result = pthread_create(&thread, &attributes, &TSspi_Debug_Task, NULL);
+        TSspi_debug_ready = (result == 0);
+    }
+    (void)pthread_attr_destroy(&attributes);
+}
+
+static void * TSspi_Debug_Task(void * argument)
+{
+    TSspi_debug_entry_t entry;
+    size_t count;
+    sigset_t signals;
+    (void)argument;
+    /* stderr 파이프가 닫혀도 이 출력 스레드의 SIGPIPE로 프로세스를 종료하지 않는다. */
+    if (sigemptyset(&signals) != 0)
+    {
+        return NULL;
+    }
+    if (sigaddset(&signals, SIGPIPE) != 0)
+    {
+        return NULL;
+    }
+    if (pthread_sigmask(SIG_BLOCK, &signals, NULL) != 0)
+    {
+        return NULL;
+    }
+    for (;;)
+    {
+        for (count = 0U; count < TSspi_DEBUG_BATCH_SIZE; ++count)
+        {
+            if (TSspi_Debug_Get(&entry) == false)
+            {
+                break;
+            }
+            /* 큐 잠금을 해제한 뒤에만 출력한다. */
+            TSspi_Debug_Print(&entry);
+        }
+        TSspi_Set_Delay(TSspi_DEBUG_POLL_US);
+    }
+    return NULL;
+}
+
+static void TSspi_Debug_Event(const TSspi_axis_context_t * axis, const char * message, uint32_t detail, const uint8_t * bytes)
+{
+    TSspi_debug_entry_t * entry;
+    size_t index;
+    if (TSspi_debug_ready == false)
+    {
+        return;
+    }
+    /* 잠금을 기다리지 않는다. 경합 중이거나 큐가 가득 차면 진단만 버린다. */
+    if (pthread_mutex_trylock(&TSspi_debug_mutex) != 0)
+    {
+        return;
+    }
+    if (TSspi_debug_count == TSspi_DEBUG_QUEUE_SIZE)
+    {
+        if (TSspi_debug_dropped < UINT32_MAX)
+        {
+            ++TSspi_debug_dropped;
+        }
+        (void)pthread_mutex_unlock(&TSspi_debug_mutex);
+        return;
+    }
+    entry = &TSspi_debug_entries[(TSspi_debug_head + TSspi_debug_count) % TSspi_DEBUG_QUEUE_SIZE];
+    *entry = (TSspi_debug_entry_t){ .message = message, .detail = detail };
+    if (axis != NULL)
+    {
+        entry->axis = axis->axis;
+        entry->cmd = axis->request.cmd;
+        entry->seq = axis->request.seq;
+        entry->ack_seq = axis->status.ack_seq;
+        entry->op_seq = axis->status.op_seq;
+        entry->state = (uint8_t)axis->status.state;
+        entry->receipt = axis->status.receipt;
+        entry->fault = axis->status.device_fault;
+        entry->heartbeat = axis->status.heartbeat_counter;
+    }
+    if (bytes != NULL)
+    {
+        entry->has_bytes = true;
+        for (index = 0U; index < TSspi_FRAME_SIZE; ++index)
+        {
+            entry->bytes[index] = bytes[index];
+        }
+    }
+    ++TSspi_debug_count;
+    (void)pthread_mutex_unlock(&TSspi_debug_mutex);
+}
+
+static bool TSspi_Debug_Get(TSspi_debug_entry_t * entry)
+{
+    bool available = false;
+    if (pthread_mutex_trylock(&TSspi_debug_mutex) != 0)
+    {
+        return false;
+    }
+    if (TSspi_debug_count > 0U)
+    {
+        *entry = TSspi_debug_entries[TSspi_debug_head];
+        TSspi_debug_head = (TSspi_debug_head + 1U) % TSspi_DEBUG_QUEUE_SIZE;
+        --TSspi_debug_count;
+        available = true;
+    }
+    else if (TSspi_debug_dropped > 0U)
+    {
+        *entry = (TSspi_debug_entry_t){ .message = "debug queue overflow dropped", .detail = TSspi_debug_dropped };
+        TSspi_debug_dropped = 0U;
+        available = true;
+    }
+    else
+    {
+        /* 기록 없음. */
+    }
+    (void)pthread_mutex_unlock(&TSspi_debug_mutex);
+    return available;
+}
+
+static void TSspi_Debug_Print(const TSspi_debug_entry_t * entry)
+{
+    const char digits[] = "0123456789ABCDEF";
+    char text[TSspi_DEBUG_TEXT_SIZE];
+    size_t length = 0U;
+    size_t index;
+    TSspi_Debug_Text(text, &length, "TSspi ");
+    if (entry->axis == main_AXIS_X)
+    {
+        TSspi_Debug_Text(text, &length, "X ");
+    }
+    else if (entry->axis == main_AXIS_Z)
+    {
+        TSspi_Debug_Text(text, &length, "Z ");
+    }
+    else
+    {
+        TSspi_Debug_Text(text, &length, "- ");
+    }
+    TSspi_Debug_Text(text, &length, entry->message);
+    TSspi_Debug_Value(text, &length, " detail=", entry->detail);
+    TSspi_Debug_Value(text, &length, " cmd=", entry->cmd);
+    TSspi_Debug_Value(text, &length, " seq=", entry->seq);
+    TSspi_Debug_Value(text, &length, " ack=", entry->ack_seq);
+    TSspi_Debug_Value(text, &length, " op=", entry->op_seq);
+    TSspi_Debug_Value(text, &length, " state=", entry->state);
+    TSspi_Debug_Value(text, &length, " receipt=", entry->receipt);
+    TSspi_Debug_Value(text, &length, " fault=", entry->fault);
+    TSspi_Debug_Value(text, &length, " hb=", entry->heartbeat);
+    if (entry->has_bytes == true)
+    {
+        TSspi_Debug_Text(text, &length, " bytes=");
+        for (index = 0U; index < TSspi_FRAME_SIZE; ++index)
+        {
+            char byte[4] = { digits[entry->bytes[index] >> 4U], digits[entry->bytes[index] & 0x0FU], ' ', '\0' };
+            TSspi_Debug_Text(text, &length, byte);
+        }
+    }
+    TSspi_Debug_Text(text, &length, "\n");
+    TSspi_Debug_Write(text, length);
+}
+
+static void TSspi_Debug_Text(char * text, size_t * length, const char * value)
+{
+    size_t index = 0U;
+    while (value[index] != '\0')
+    {
+        if (*length >= (TSspi_DEBUG_TEXT_SIZE - 1U))
+        {
+            break;
+        }
+        text[*length] = value[index];
+        ++(*length);
+        ++index;
+    }
+}
+
+static void TSspi_Debug_Value(char * text, size_t * length, const char * label, uint32_t value)
+{
+    const char digits[] = "0123456789ABCDEF";
+    char hex[11] = { '0', 'x', '0', '0', '0', '0', '0', '0', '0', '0', '\0' };
+    uint32_t index;
+    for (index = 0U; index < 8U; ++index)
+    {
+        hex[index + 2U] = digits[(value >> ((7U - index) * 4U)) & 0x0FU];
+    }
+    TSspi_Debug_Text(text, length, label);
+    TSspi_Debug_Text(text, length, hex);
+}
+
+static void TSspi_Debug_Write(const char * text, size_t length)
+{
+    size_t position = 0U;
+    ssize_t count;
+    while (position < length)
+    {
+        count = write(STDERR_FILENO, &text[position], length - position);
+        if (count > 0)
+        {
+            position += (size_t)count;
+        }
+        else
+        {
+            if (count == 0)
+            {
+                break;
+            }
+            if (errno != EINTR)
+            {
+                break;
+            }
+        }
+    }
+}
+#else
+#define TSspi_Debug_Init() ((void)0)
+#define TSspi_Debug_Event(axis, message, detail, bytes) ((void)0)
+#endif /* TSspi_DEBUG_ENABLED */
+
 /* ==================== 1. 명령 하나 처리 / 양축 NOP 조회 ==================== */
 void * TSspi_Init_Task(void * argument)
 {
@@ -59,9 +308,12 @@ void * TSspi_Init_Task(void * argument)
     main_axis_command_t command;
     uint64_t now;
     (void)argument;
+    TSspi_Debug_Init();
+    TSspi_Debug_Event(NULL, "task started", 0U, NULL);
     TSspi_Init_Communication(&config);
     if (TSspi_initialized == false)
     {
+        TSspi_Debug_Event(NULL, "configuration/time invalid", 0U, NULL);
         TSspi_Set_Stop_All();
         TScontrol_Set_Fault(main_FAULT_SPI_COMMUNICATION);
         return NULL;
@@ -148,11 +400,16 @@ void TSspi_Parse(const TSspi_response_t * response)
     {
         return;
     }
+#if TSspi_DEBUG_ENABLED
+    const bool was_synced = axis->synced;
+    const main_heartbeat_status_t previous_heartbeat = axis->status.heartbeat_status;
+#endif
     /* ARM 이후 BOOT가 보이면 MCU 재부팅이다. 이전 작업을 이어가지 않는다. */
     if (axis->armed == true)
     {
         if (((response->relay >> 3U) & 0x0FU) == TSspi_BOOT_STAGE)
         {
+            TSspi_Debug_Event(axis, "MCU BOOT after ARM", response->relay, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
@@ -197,6 +454,19 @@ void TSspi_Parse(const TSspi_response_t * response)
         axis->status.fault = main_FAULT_SPI_COMMUNICATION;
     }
 
+#if TSspi_DEBUG_ENABLED
+    if (was_synced == false)
+    {
+        TSspi_Debug_Event(axis, "seq synchronized", response->ack_seq, NULL);
+    }
+    if (previous_heartbeat != main_HEARTBEAT_NORMAL)
+    {
+        if (axis->status.heartbeat_status == main_HEARTBEAT_NORMAL)
+        {
+            TSspi_Debug_Event(axis, "heartbeat normal", response->heartbeat, NULL);
+        }
+    }
+#endif
     /* STOP/ARM 대기 중 이전 FAULT 응답은 허용한다. 현재 요청의 receipt를 기다린다. */
     if (axis->pending != TSspi_PENDING_NONE)
     {
@@ -206,6 +476,7 @@ void TSspi_Parse(const TSspi_response_t * response)
     {
         if (axis->status.fault != main_FAULT_NONE)
         {
+            TSspi_Debug_Event(axis, "MCU fault", axis->status.device_fault, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
@@ -223,6 +494,7 @@ static void TSspi_Set_Receipt(TSspi_axis_context_t * axis, const TSspi_response_
     {
         if (axis->status.fault != main_FAULT_NONE)
         {
+            TSspi_Debug_Event(axis, "MCU fault", axis->status.device_fault, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
@@ -233,6 +505,7 @@ static void TSspi_Set_Receipt(TSspi_axis_context_t * axis, const TSspi_response_
     }
     if (response->receipt != 0U)
     {
+        TSspi_Debug_Event(axis, "MCU receipt rejected", response->receipt, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
@@ -330,21 +603,25 @@ static void TSspi_Parse_Command(const main_axis_command_t * command)
     }
     if (TSspi_Get_Wire_Command(command, &cmd) == false)
     {
+        TSspi_Debug_Event(axis, "invalid command/arg/target", (uint32_t)command->command, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (axis->device == TSspi_INVALID_DEVICE)
     {
+        TSspi_Debug_Event(axis, "command with device closed", 0U, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (axis->synced == false)
     {
+        TSspi_Debug_Event(axis, "command before seq sync", 0U, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (axis->pending != TSspi_PENDING_NONE)
     {
+        TSspi_Debug_Event(axis, "command while pending", (uint32_t)axis->pending, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
@@ -352,11 +629,13 @@ static void TSspi_Parse_Command(const main_axis_command_t * command)
     {
         if (axis->stopped == false)
         {
+            TSspi_Debug_Event(axis, "ARM without STOP confirmation", 0U, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
         if (axis->stop_required == true)
         {
+            TSspi_Debug_Event(axis, "ARM while STOP pending", 0U, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
@@ -365,6 +644,7 @@ static void TSspi_Parse_Command(const main_axis_command_t * command)
     {
         if (axis->armed == false)
         {
+            TSspi_Debug_Event(axis, "command before ARM", 0U, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
@@ -375,6 +655,7 @@ static void TSspi_Parse_Command(const main_axis_command_t * command)
         if (TSspi_blocked == true)
         {
             (void)pthread_mutex_unlock(&TSspi_mutex);
+            TSspi_Debug_Event(axis, "command while queue blocked", 0U, NULL);
             TSspi_Set_Fault(axis);
             return;
         }
@@ -404,6 +685,7 @@ static void TSspi_Set_Start(TSspi_axis_context_t * axis, main_axis_command_code_
     {
         axis->stopped = false;
     }
+    TSspi_Debug_Event(axis, "command start", arg, NULL);
     if (TSspi_Set_Exchange(axis, &axis->request) == false)
     {
         TSspi_Set_Fault(axis);
@@ -521,11 +803,13 @@ static bool TSspi_Check_Timeout(TSspi_axis_context_t * axis, uint64_t now)
     }
     if ((now - axis->last_response_ms) >= TSspi_config.response_timeout_ms)
     {
+        TSspi_Debug_Event(axis, "valid response timeout", TSspi_config.response_timeout_ms, NULL);
         TSspi_Set_Fault(axis);
         return false;
     }
     if ((now - axis->heartbeat_changed_ms) >= TSspi_config.heartbeat_timeout_ms)
     {
+        TSspi_Debug_Event(axis, "heartbeat timeout", TSspi_config.heartbeat_timeout_ms, NULL);
         TSspi_Set_Fault(axis);
         return false;
     }
@@ -548,6 +832,7 @@ static bool TSspi_Check_Timeout(TSspi_axis_context_t * axis, uint64_t now)
     }
     if ((now - axis->command_ms) >= limit)
     {
+        TSspi_Debug_Event(axis, (axis->pending == TSspi_PENDING_RECEIPT) ? "receipt timeout" : "work timeout", limit, NULL);
         TSspi_Set_Fault(axis);
         return false;
     }
@@ -556,6 +841,7 @@ static bool TSspi_Check_Timeout(TSspi_axis_context_t * axis, uint64_t now)
 
 static void TSspi_Set_Fault(TSspi_axis_context_t * axis)
 {
+    TSspi_Debug_Event(axis, "FAULT -> priority STOP", 0U, NULL);
     axis->armed = false;
     axis->synced = false;
     axis->valid_response = false;
@@ -757,6 +1043,28 @@ static void TSspi_Set_Publish(TSspi_axis_context_t * axis, main_axis_event_t eve
     {
         axis->status.acknowledged = true;
     }
+#if TSspi_DEBUG_ENABLED
+    if (event == main_AXIS_EVENT_STOPPED)
+    {
+        TSspi_Debug_Event(axis, "STOP confirmed", 0U, NULL);
+    }
+    else if (event == main_AXIS_EVENT_ARMED)
+    {
+        TSspi_Debug_Event(axis, "ARM confirmed", 0U, NULL);
+    }
+    else if (event == main_AXIS_EVENT_ACK)
+    {
+        TSspi_Debug_Event(axis, "command accepted", 0U, NULL);
+    }
+    else if (event == main_AXIS_EVENT_COMPLETE)
+    {
+        TSspi_Debug_Event(axis, "work complete", 0U, NULL);
+    }
+    else
+    {
+        /* 주기적 STATUS는 출력하지 않는다. */
+    }
+#endif
     TSspi_Set_Device_Status(&axis->status);
     TScontrol_Set_Axis_Event(axis->axis, event, &axis->status);
 }
@@ -777,26 +1085,31 @@ static void TSspi_Set_Open(TSspi_axis_context_t * axis, uint64_t now)
     axis->device = open(path, O_RDWR | O_CLOEXEC);
     if (axis->device == TSspi_INVALID_DEVICE)
     {
+        TSspi_Debug_Event(axis, "open failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (ioctl(axis->device, SPI_IOC_WR_MODE, &mode) < 0)
     {
+        TSspi_Debug_Event(axis, "SPI_IOC_WR_MODE failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (ioctl(axis->device, SPI_IOC_WR_LSB_FIRST, &lsb_first) < 0)
     {
+        TSspi_Debug_Event(axis, "SPI_IOC_WR_LSB_FIRST failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (ioctl(axis->device, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0)
     {
+        TSspi_Debug_Event(axis, "SPI_IOC_WR_BITS_PER_WORD failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (ioctl(axis->device, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0)
     {
+        TSspi_Debug_Event(axis, "SPI_IOC_WR_MAX_SPEED_HZ failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
@@ -811,6 +1124,7 @@ static void TSspi_Set_Open(TSspi_axis_context_t * axis, uint64_t now)
     axis->last_poll_ms = 0U;
     axis->status = (main_axis_status_t){ .axis = axis->axis, .state = main_AXIS_STATE_UNKNOWN, .heartbeat_status = main_HEARTBEAT_UNKNOWN };
     TSspi_Set_Device_Status(&axis->status);
+    TSspi_Debug_Event(axis, "device opened", TSspi_SPEED_HZ, NULL);
 }
 
 static bool TSspi_Set_Exchange(TSspi_axis_context_t * axis, const TSspi_request_t * request)
@@ -833,10 +1147,15 @@ static bool TSspi_Set_Exchange(TSspi_axis_context_t * axis, const TSspi_request_
     }
     if (TSspi_Get_Response(rx, &response) == false)
     {
+#if TSspi_DEBUG_ENABLED
+        const uint16_t expected_crc = TSspi_Get_Crc(rx, TSspi_CRC_OFFSET);
+        TSspi_Debug_Event(axis, (response.crc != expected_crc) ? "RX CRC mismatch (detail=expected CRC)" : "RX header/fields invalid (detail=expected CRC)", expected_crc, rx);
+#endif
         return false;
     }
     if (response.axis != (uint8_t)axis->axis)
     {
+        TSspi_Debug_Event(axis, "RX axis mismatch (detail=received axis)", response.axis, rx);
         return false;
     }
     TSspi_Parse(&response);
@@ -847,6 +1166,7 @@ static bool TSspi_Set_Transfer(TSspi_axis_context_t * axis, const TSspi_request_
 {
     TSspi_request_t request = *frame;
     uint8_t tx[TSspi_FRAME_SIZE];
+    int result;
     const struct spi_ioc_transfer transfer = { .tx_buf = (uint64_t)(uintptr_t)tx, .rx_buf = (uint64_t)(uintptr_t)rx, .len = TSspi_FRAME_SIZE, .speed_hz = TSspi_SPEED_HZ, .bits_per_word = TSspi_BITS_PER_WORD };
     /* STM32는 NSS 상승에서 DMA를 다시 준비한다. 요청/NOP 사이뿐 아니라
      * 직전 교환의 마지막 NOP와 다음 요청 사이에도 CS HIGH 시간을 확보한다.
@@ -858,7 +1178,25 @@ static bool TSspi_Set_Transfer(TSspi_axis_context_t * axis, const TSspi_request_
     request.axis = (uint8_t)axis->axis;
     request.remote = TSspi_Get_Remote(axis->axis);
     TSspi_Set_Request(&request, tx);
-    return ioctl(axis->device, SPI_IOC_MESSAGE(1), &transfer) == (int)TSspi_FRAME_SIZE;
+    result = ioctl(axis->device, SPI_IOC_MESSAGE(1), &transfer);
+#if TSspi_DEBUG_ENABLED
+    if (result < 0)
+    {
+        TSspi_Debug_Event(axis, "SPI transfer failed (detail=errno)", (uint32_t)errno, tx);
+    }
+    else if (result != (int)TSspi_FRAME_SIZE)
+    {
+        TSspi_Debug_Event(axis, "SPI short transfer (detail=bytes)", (uint32_t)result, tx);
+    }
+#if TSspi_DEBUG_FRAMES_ENABLED
+    else
+    {
+        TSspi_Debug_Event(axis, "TX", request.cmd, tx);
+        TSspi_Debug_Event(axis, "RX", request.cmd, rx);
+    }
+#endif
+#endif
+    return result == (int)TSspi_FRAME_SIZE;
 }
 
 static uint8_t TSspi_Get_Remote(main_axis_t axis)

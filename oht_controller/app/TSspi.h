@@ -37,6 +37,7 @@
 #define TSspi_MOVE_TIMEOUT_MS (30000U)
 #define TSspi_WORK_TIMEOUT_MS (45000U)
 #define TSspi_REOPEN_MS (1000U)
+/* STM32 SPI2 DMA 재준비: 모든 프레임 사이 CS HIGH 최소 시간. */
 #define TSspi_RESPONSE_DELAY_US (1000U)
 #define TSspi_FRAME_SIZE (24U)
 #define TSspi_CRC_OFFSET (22U)

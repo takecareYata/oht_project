@@ -50,7 +50,7 @@ sequenceDiagram
     Z-->>SPI: ack_seq 동기화
     SPI->>X: TSspi_Set_Start(STOP) / TSspi_Set_Exchange()
     SPI->>Z: TSspi_Set_Start(STOP) / TSspi_Set_Exchange()
-    Note over SPI,Z: 모든 교환은 요청 → 1ms 대기 → NOP 응답 읽기
+    Note over SPI,Z: TSspi_Set_Transfer()가 매 전송 전 1ms 대기. 교환 경계에서도 CS HIGH 확보
     X-->>SPI: ack_seq 일치, receipt=0, UNKNOWN 또는 FAULT
     Z-->>SPI: ack_seq 일치, receipt=0, UNKNOWN 또는 FAULT
     SPI->>CONTROL: TSspi_Set_Receipt() → TScontrol_Set_Axis_Event(STOPPED), 양축
@@ -89,7 +89,7 @@ sequenceDiagram
     participant E84 as TSe84 (구현 예정)
     TCP->>CONTROL: TScontrol_Set_Command(START)
     CONTROL->>CONTROL: TScontrol_Parse_Command() → TScontrol_Is_Ready()
-    alt 양축 ARM·Heartbeat·E84 인터록 정상
+    alt 중앙 운전 상태·양축 ARM·SPI Heartbeat 정상
         CONTROL->>CONTROL: TScontrol_Set_Transition(WAFER_PICKUP)
         CONTROL->>SPI: TScontrol_Set_Axis_Command(Z, PICK) → TSspi_Set_Axis_Command()
         Note over SPI: STM32가 하강/집게/상승을 실행하는 동안 NOP 조회
@@ -133,7 +133,7 @@ sequenceDiagram
     SPI->>SPI: TSspi_Get_Command() → TSspi_Parse_Command()
     SPI->>SPI: TSspi_Set_Start() (새 seq, 접수 대기)
     SPI->>MCU: TSspi_Set_Transfer(요청 24바이트)
-    Note over SPI,MCU: CS 해제 / TSspi_Set_Delay(최소 1ms)
+    Note over SPI,MCU: CS 해제 / 다음 TSspi_Set_Transfer()에서 최소 1ms 대기
     SPI->>MCU: TSspi_Set_Transfer(NOP 24바이트)
     MCU-->>SPI: 응답 24바이트
     SPI->>SPI: TSspi_Get_Response() → TSspi_Parse() → TSspi_Set_Receipt()

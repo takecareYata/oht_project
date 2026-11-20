@@ -827,7 +827,6 @@ static bool TSspi_Set_Exchange(TSspi_axis_context_t * axis, const TSspi_request_
     {
         return false;
     }
-    TSspi_Set_Delay(TSspi_RESPONSE_DELAY_US);
     if (TSspi_Set_Transfer(axis, &nop, rx) == false)
     {
         return false;
@@ -849,6 +848,11 @@ static bool TSspi_Set_Transfer(TSspi_axis_context_t * axis, const TSspi_request_
     TSspi_request_t request = *frame;
     uint8_t tx[TSspi_FRAME_SIZE];
     const struct spi_ioc_transfer transfer = { .tx_buf = (uint64_t)(uintptr_t)tx, .rx_buf = (uint64_t)(uintptr_t)rx, .len = TSspi_FRAME_SIZE, .speed_hz = TSspi_SPEED_HZ, .bits_per_word = TSspi_BITS_PER_WORD };
+    /* STM32는 NSS 상승에서 DMA를 다시 준비한다. 요청/NOP 사이뿐 아니라
+     * 직전 교환의 마지막 NOP와 다음 요청 사이에도 CS HIGH 시간을 확보한다.
+     * 이 태스크만 SPI를 사용하며 이전 ioctl 반환 후 최소 1ms 대기한다.
+     */
+    TSspi_Set_Delay(TSspi_RESPONSE_DELAY_US);
     request.magic = TSspi_REQUEST_MAGIC;
     request.version = TSspi_VERSION;
     request.axis = (uint8_t)axis->axis;

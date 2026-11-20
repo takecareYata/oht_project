@@ -71,7 +71,7 @@ void TScontrol_Set_Axis_Event(main_axis_t axis, main_axis_event_t event, const m
 /* E84 CSU에서 인계 준비 및 완료 이벤트를 전달받는다. */
 void TScontrol_Set_E84_Event(main_e84_event_t event);
 
-/* 인터록, SPI 통신, E84 Heartbeat 및 타임아웃 오류를 전달받는다. */
+/* 인터록, SPI 통신 및 E84 타임아웃 오류를 전달받는다. */
 void TScontrol_Set_Fault(main_fault_t fault);
 
 /* TCP 태스크 전용: FSM 알림 큐를 비우며 기존 TCP 송신 API를 호출한다. */

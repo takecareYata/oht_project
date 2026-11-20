@@ -84,6 +84,7 @@ Jetson master / STM32F411RE slave. MOSI=물리19, MISO=21, SCLK=23. X CS0=24(`/d
 ## 응답 처리와 재전송
 
 - `TSspi_Set_Exchange`: 요청 24바이트 → CS 해제 → 최소 1ms → NOP 24바이트. 첫 전송의 동시 RX는 사용하지 않는다.
+- `TSspi_Set_Transfer`는 모든 전송 전에 최소 1ms 대기한다. 따라서 NOP 응답을 읽은 직후 같은 축에 새 요청을 보내도 CS HIGH 시간을 확보한다. STM32 SPI2 DMA의 NSS 상승 후 재준비 조건에 맞춘 처리다.
 - 수락은 `ack_seq == 요청 seq && receipt == 0`. 반영이 늦으면 500ms 안에서 NOP로 기다린다. 거부 receipt는 즉시 고장이다.
 - 작업 완료는 수락 조건과 `op_seq == 요청 seq`, `state=COMPLETE`, `fault=0`. position은 완료 조건에 사용하지 않는다.
 - ARM 확인은 해당 ack_seq, receipt=0, IDLE, fault=0. STOP 확인은 해당 ack_seq, receipt=0, UNKNOWN 또는 FAULT이다. STOP 응답의 기존 fault는 허용한다.
@@ -103,7 +104,7 @@ TCP 프레임 길이와 msgid는 유지한다. GET_COMMAND payload의 [main_comm
 
 STATUS.state에 STOPPING=10, ARMING_Z=11, ARMING_X=12, RECOVER_Z=13, RECOVER_X=14를 추가했다. 기존 0~9 값은 유지한다.
 
-START에는 양축 ARM·IDLE/COMPLETE·정상 Heartbeat와 정상 E84 Heartbeat가 필요하다. [TSe84.c](../app/TSe84.c)는 아직 골격이며 UNKNOWN을 반환하므로 **실제 전체 반송 START는 현재 거부된다**. SPI 초기 복구는 E84 정상 여부와 별개다. 이 파일의 E84 시퀀스는 호출 인터페이스 연결이며 GPIO 구현 완료를 뜻하지 않는다.
+START에는 중앙 IDLE/COMPLETE·고장 없음·양축 ARM·IDLE/COMPLETE·정상 SPI Heartbeat가 필요하다. E84 Heartbeat 설정·조회·운전 조건은 제거했다. 조건을 만족하면 START로 Z PICK과 X 이동을 진행한다. [TSe84.c](../app/TSe84.c)는 아직 GPIO 처리 골격이므로 이후 E84 준비 단계는 실제 READY 이벤트가 올 때까지 기다린다. 이 파일의 E84 시퀀스는 호출 인터페이스 연결이며 GPIO 구현 완료를 뜻하지 않는다.
 
 ## 상태 전달 및 제한시간
 

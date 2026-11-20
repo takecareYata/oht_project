@@ -60,8 +60,8 @@ typedef enum
     main_FAULT_NONE = 0,
     main_FAULT_INTERLOCK,
     main_FAULT_SPI_COMMUNICATION,
-    main_FAULT_E84_HEARTBEAT,
-    main_FAULT_E84_TIMEOUT,
+    /* 기존 TCP 오류 코드값을 유지한다. 삭제된 코드 3은 재사용하지 않는다. */
+    main_FAULT_E84_TIMEOUT = 4,
     main_FAULT_STOP
 } main_fault_t;
 

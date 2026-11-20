@@ -447,10 +447,8 @@ static bool TScontrol_Is_Ready(void)
 {
     main_heartbeat_status_t x = main_HEARTBEAT_UNKNOWN;
     main_heartbeat_status_t z = main_HEARTBEAT_UNKNOWN;
-    main_heartbeat_status_t e84 = main_HEARTBEAT_UNKNOWN;
     TSspi_Get_Heartbeat_Status(main_AXIS_X, &x);
     TSspi_Get_Heartbeat_Status(main_AXIS_Z, &z);
-    TSe84_Get_Heartbeat_Status(&e84);
     if (TScontrol_status.fault != main_FAULT_NONE)
     {
         return false;
@@ -492,7 +490,7 @@ static bool TScontrol_Is_Ready(void)
     {
         return false;
     }
-    return e84 == main_HEARTBEAT_NORMAL;
+    return true;
 }
 
 /* ==================== 5. 외부 CSU 연결: 입력 큐와 TCP 알림 ==================== */
@@ -569,11 +567,19 @@ void TScontrol_Set_E84_Event(main_e84_event_t event)
 void TScontrol_Set_Fault(main_fault_t fault)
 {
     TScontrol_event_t event = { 0 };
-    if ((fault >= main_FAULT_INTERLOCK) && (fault <= main_FAULT_STOP))
+    switch (fault)
     {
-        event.kind = TScontrol_EVENT_FAULT;
-        event.fault = fault;
-        TScontrol_Set_Event(&event);
+        case main_FAULT_INTERLOCK:
+        case main_FAULT_SPI_COMMUNICATION:
+        case main_FAULT_E84_TIMEOUT:
+        case main_FAULT_STOP:
+            event.kind = TScontrol_EVENT_FAULT;
+            event.fault = fault;
+            TScontrol_Set_Event(&event);
+            break;
+        case main_FAULT_NONE:
+        default:
+            break;
     }
 }
 

@@ -7,7 +7,6 @@ void * TSe84_Init_Task(void * argument)
     /* 설정값 0은 미설정 상태이다. 신호 제어는 아직 구현하지 않는다. */
     const TSe84_config_t config =
     {
-        .heartbeat_timeout_ms = 0U,
         .l_req_timeout_ms = 0U,
         .ready_timeout_ms = 0U,
         .transfer_timeout_ms = 0U,
@@ -38,14 +37,6 @@ void TSe84_Init_Communication(const TSe84_config_t * config)
 void TSe84_Set_Request(main_e84_request_t request)
 {
     (void)request;
-}
-
-void TSe84_Get_Heartbeat_Status(main_heartbeat_status_t * status)
-{
-    if (status != NULL)
-    {
-        *status = main_HEARTBEAT_UNKNOWN;
-    }
 }
 
 void TSe84_Get_Signal(TSe84_signal_t * signal)

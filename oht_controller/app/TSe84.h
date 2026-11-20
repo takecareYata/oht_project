@@ -35,7 +35,6 @@ typedef enum
 
 typedef struct
 {
-    uint32_t heartbeat_timeout_ms;
     uint32_t l_req_timeout_ms;
     uint32_t ready_timeout_ms;
     uint32_t transfer_timeout_ms;
@@ -56,13 +55,10 @@ void TSe84_Init_Communication(const TSe84_config_t * config);
 /* PREPARE, BUSY, COMPLETE 단계의 인계 요청을 전달받는다. */
 void TSe84_Set_Request(main_e84_request_t request);
 
-/* 미구현 상태에서는 main_HEARTBEAT_UNKNOWN을 반환한다. */
-void TSe84_Get_Heartbeat_Status(main_heartbeat_status_t * status);
-
 /* 미구현 상태에서는 두 신호 필드를 모두 TSe84_SIGNAL_NONE으로 설정한다. */
 void TSe84_Get_Signal(TSe84_signal_t * signal);
 
-/* Heartbeat 또는 핸드셰이크 타임아웃 오류를 설정한다. */
+/* 핸드셰이크 타임아웃 등의 E84 오류를 설정한다. */
 void TSe84_Set_Fault(main_fault_t fault);
 
 #endif /* TSe84_H */

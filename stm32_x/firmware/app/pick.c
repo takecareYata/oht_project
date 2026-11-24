@@ -1,9 +1,19 @@
+/* ============================================================================
+ * pick.c — [Z 보드] PICK/PLACE 시퀀스 (L4)
+ *
+ * PICK : 하강 → 열기(스위치 해제 확인) → 닫기(접촉 확인) → 상승
+ * PLACE: [파지 확인] → 하강 → 열기 → 상승
+ *
+ * 매 루프 인터록(X 정지 + 정거장 도착)을 다시 확인하고, 사라지면 INTERLOCK 정지.
+ * RECOVER는 controller.c에서 내부 명령 Z_UP으로 바뀌어 들어온다.
+ * ============================================================================ */
 #include "control.h"
 static control_state_t pick_state;
 static control_error_t pick_error;
-static uint8_t pick_command;
-static uint8_t pick_stage;
-static bool pick_sequence;
+static uint8_t pick_command; /* 실행 중 명령 (Z_UP/Z_DOWN/OPEN/CLOSE/PICK/PLACE) */
+static uint8_t pick_stage;   /* PICK/PLACE 내부 단계 0~3 */
+static bool pick_sequence;   /* true = PICK/PLACE 연속 동작, false = 단일 동작 */
+/* 고장: Z·집게 모두 정지하고 고장 코드 기록. */
 static void pick_Set_Fault(control_error_t error)
 {
     zlift_Set_Stop();
@@ -11,6 +21,8 @@ static void pick_Set_Fault(control_error_t error)
     pick_state = CONTROL_ERROR;
     pick_error = error;
 }
+/* 명령 시작. 인터록과 PLACE 파지 조건을 확인한 뒤 첫 동작을 건다.
+ * 응답 stage: Z_UP 3, PICK 4(하강부터), PLACE 8(하강부터). */
 void pick_Set_Command(uint8_t command, uint8_t remote)
 {
     pick_command = command;
@@ -48,9 +60,23 @@ void pick_Set_Command(uint8_t command, uint8_t remote)
         }
     }
 }
+/* 매 루프: 하위 모듈 진행, 고장 감시, PICK/PLACE 단계 전환.
+ * 내부 단계(pick_stage) → 응답 stage
+ *   0 하강 대기      → PICK 4 / PLACE 8
+ *   1 열기 대기      → PICK 5 / PLACE 9
+ *   2 닫기·접촉 대기 → PICK 6 (PICK만)
+ *   3 상승 대기      → PICK 7 / PLACE 10 */
 void pick_Set_Update(uint8_t remote)
 {
     control_state_t state = CONTROL_IDLE;
+#if CONFIG_Z_TIMED != 0U
+    /* Z 백도어: B1 버튼 = 지금 진행 중인 동작(Z 이동 또는 집게 닫기) 완료 */
+    if (sensor_Get_Button_Event())
+    {
+        zlift_Set_Confirm();
+        gripper_Set_Confirm();
+    }
+#endif
     zlift_Set_Update();
     gripper_Set_Update();
     if (pick_state == CONTROL_BUSY)
@@ -75,7 +101,7 @@ void pick_Set_Update(uint8_t remote)
                 {
                     if (zlift_Get_State() == CONTROL_DONE)
                     {
-                        /* PICK opens at the support before closing; PLACE opens only. */
+                        /* 하강 완료 → 열기. PICK은 열고 나서 닫고, PLACE는 열기만 */
                         gripper_Set_Target(false);
                         pick_stage = 1U;
                         status_Set_Stage((pick_command == CONTROL_CMD_PICK) ? 5U : 9U);
@@ -116,7 +142,7 @@ void pick_Set_Update(uint8_t remote)
                 {
                 }
             }
-            else
+            else /* 단일 동작: 해당 모듈이 DONE이면 완료 */
             {
                 state = ((pick_command == CONTROL_CMD_Z_UP) || (pick_command == CONTROL_CMD_Z_DOWN))
                             ? zlift_Get_State()
@@ -128,11 +154,13 @@ void pick_Set_Update(uint8_t remote)
             }
         }
     }
+    /* 대기·완료 중에도 파지 상실(GRIP)은 고장으로 올린다 */
     else if (gripper_Get_State() == CONTROL_ERROR)
     {
         pick_Set_Fault(gripper_Get_Error());
     }
 }
+/* 정지: Z·집게 출력 off. 집게 스텝 위치와 파지 여부는 유지된다. */
 void pick_Set_Stop(void)
 {
     zlift_Set_Stop();

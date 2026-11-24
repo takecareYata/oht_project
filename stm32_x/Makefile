@@ -7,12 +7,14 @@ PROGRAMMER ?= STM32_Programmer_CLI
 # Optional ST-Link serial number when multiple boards are connected.
 STLINK_SN ?=
 BOARD ?= 1
-OUT := build/board$(BOARD)
+# Z backdoor, board 1 only (see config.h): Z_TIMED=1 time + B1 button, Z_TIMED=2 B1 button only.
+Z_TIMED ?= 0
+OUT := build/board$(BOARD)$(if $(filter 1,$(Z_TIMED)),_ztimed)$(if $(filter 2,$(Z_TIMED)),_zbutton)
 SOURCES := $(wildcard firmware/driver/*.c firmware/service/*.c firmware/app/*.c firmware/bsp/*.c firmware/startup/*.c) firmware/main.c
 ASM_SOURCES := firmware/vendor/startup_stm32f411xe.s
 OBJECTS := $(patsubst firmware/%.c,$(OUT)/%.o,$(SOURCES)) $(patsubst firmware/%.s,$(OUT)/%.o,$(ASM_SOURCES))
 ASFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -g3 -x assembler-with-cpp -MMD -MP
-CFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -std=gnu11 -Os -g3 -Wall -Wextra -Werror -Wconversion -Wshadow -ffunction-sections -fdata-sections -fno-common -MMD -MP -DBOARD_ID=$(BOARD) -DSTM32F411xE -Ifirmware/include -Ifirmware/vendor
+CFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -std=gnu11 -Os -g3 -Wall -Wextra -Werror -Wconversion -Wshadow -ffunction-sections -fdata-sections -fno-common -MMD -MP -DBOARD_ID=$(BOARD) -DCONFIG_Z_TIMED=$(Z_TIMED)U -DSTM32F411xE -Ifirmware/include -Ifirmware/vendor
 LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -nostdlib -Tfirmware/linker/stm32f411re.ld -Wl,--gc-sections,-Map=$(OUT)/firmware.map
 .PHONY: all both flash clean test
 all: $(OUT)/firmware.bin

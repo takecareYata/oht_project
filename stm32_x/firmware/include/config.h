@@ -41,6 +41,15 @@
 #endif
 /* 센서 탐색 이동이 TRAVEL_STEPS보다 이만큼(%) 더 가도 센서가 없으면 고장. */
 #define CONFIG_X_OVERRUN_PERCENT 10UL
+/* X 정거장 판정 백도어 (보드2, 벤치 시험 전용, 기본 0 = 꺼짐) — `make BOARD=2 X_STATION=1`
+ * 0: relay bit2(X 유효 정거장)는 A/B 끝 센서가 실제로 감지될 때만 켠다.
+ * 1: 센서가 없어도, 원점이 잡혀 있고 정지 상태이며 스텝 위치가 정확히 0(A) 또는
+ *    CONFIG_X_TRAVEL_STEPS(B)이면 bit2를 켠다. → X 센서 없이 Z PICK/PLACE가 거부되지 않는다.
+ * 오픈루프라 탈조하면 실제 위치와 어긋나도 알 수 없다. 켜기 전에 캐리지를 손으로 A에 둘 것.
+ * 센서가 감지되면 그것도 그대로 반영된다. 백도어 빌드는 상태 LED가 100 ms로 빠르게 깜빡인다. */
+#ifndef CONFIG_X_STATION_STEPS
+#define CONFIG_X_STATION_STEPS 0U
+#endif
 /* ──────────── 공통 시간 값 ──────────── */
 #define CONFIG_Z_TRAVEL_MS 10000UL        /* [미보정] Z 전체 스트로크 시간 (위치 표시용 추정) */
 #define CONFIG_CLOCK_HZ 16000000UL        /* 코어 클록: 리셋 기본 HSI 16 MHz, PLL 없음 */

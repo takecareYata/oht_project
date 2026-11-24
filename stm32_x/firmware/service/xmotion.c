@@ -98,6 +98,14 @@ void xmotion_Init_State(void)
 }
 /* 절대 위치를 알고 있는가. */
 bool xmotion_Get_Referenced(void) { return xmotion_referenced; }
+/* 스텝 위치로 본 정거장 도착: 원점이 잡혀 있고, 펄스가 멈췄고, 이동 중이 아니며,
+ * 위치가 정확히 A(0) 또는 B(CONFIG_X_TRAVEL_STEPS). X 정거장 백도어에서 사용. */
+bool xmotion_Get_Station(void)
+{
+    int32_t position = stepper_Get_Position();
+    return xmotion_referenced && !stepper_Get_Running() && (xmotion_state != CONTROL_BUSY) &&
+           ((position == 0) || (position == (int32_t)CONFIG_X_TRAVEL_STEPS));
+}
 /* 이동 시작. 이미 목표 센서 위거나 목표 위치면 즉시 완료.
  * 원점이 잡혀 있으면 목표 이동(가감속), 아니면 센서 탐색 이동. */
 void xmotion_Set_Target(uint8_t target)

@@ -182,6 +182,11 @@ void comm_Set_Response(void)
     if (status_Get_State() != CONTROL_BUSY) { relay = CONTROL_REMOTE_X_STOPPED; }
     if (valid && (sensor_Get_State(0U) || sensor_Get_State(1U)))
     { relay |= CONTROL_REMOTE_X_STATION; }
+#if CONFIG_X_STATION_STEPS != 0U
+    /* X 정거장 백도어: 센서 없이 스텝 위치(A/B 정확히 도착)로 정거장 비트를 켠다 */
+    if ((status_Get_State() != CONTROL_BUSY) && xmotion_Get_Station())
+    { relay |= CONTROL_REMOTE_X_STATION; }
+#endif
 #endif
     /* 0~3 헤더·state, 4~7 ack_seq·receipt·fault, 8~9 sensors·relay/stage/link,
      * 10~11 op_seq, 12~16 position·pos_src, 18~19 heartbeat, 22~23 CRC */

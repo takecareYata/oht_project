@@ -115,6 +115,7 @@ int32_t gripstep_Get_Position(void);
 /* ---- L3 xmotion.c — [보드2] X 이동·가감속·원점 ---- */
 void xmotion_Init_State(void);
 bool xmotion_Get_Referenced(void);
+bool xmotion_Get_Station(void);
 void xmotion_Set_Target(uint8_t target);
 void xmotion_Set_Update(void);
 void xmotion_Set_Stop(void);

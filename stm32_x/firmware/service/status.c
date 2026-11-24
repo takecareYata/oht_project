@@ -56,8 +56,9 @@ void status_Set_Update(void)
         status_heartbeat++;
         status_last_heartbeat = now;
     }
-#if (BOARD_ID == 1) && (CONFIG_Z_TIMED != 0U)
-    bsp_Set_Led(((now / 100U) & 1U) != 0U); /* 빠른 깜빡임(100 ms) = Z 백도어 빌드 */
+#if ((BOARD_ID == 1) && (CONFIG_Z_TIMED != 0U)) || \
+    ((BOARD_ID == 2) && (CONFIG_X_STATION_STEPS != 0U))
+    bsp_Set_Led(((now / 100U) & 1U) != 0U); /* 빠른 깜빡임(100 ms) = 백도어 빌드 */
 #else
     bsp_Set_Led(((now / 250U) & 1U) != 0U);
 #endif

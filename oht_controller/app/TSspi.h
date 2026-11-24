@@ -7,7 +7,7 @@
  * 켠 상태에서는 SPI 태스크가 trylock 큐에 기록하고 보조 스레드가 stderr로 출력한다.
  */
 #ifndef TSspi_DEBUG_ENABLED
-#define TSspi_DEBUG_ENABLED (1)
+#define TSspi_DEBUG_ENABLED (0)
 #endif
 #ifndef TSspi_DEBUG_FRAMES_ENABLED
 #define TSspi_DEBUG_FRAMES_ENABLED (0)

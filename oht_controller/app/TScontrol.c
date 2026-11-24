@@ -149,6 +149,11 @@ static void TScontrol_Parse_Command(main_command_t command)
 
 static void TScontrol_Set_Recovery(void)
 {
+    if (TSe84_Set_Request(main_E84_REQUEST_NONE) == false)
+    {
+        TScontrol_Set_Fault_Internal(main_FAULT_INTERLOCK);
+        return;
+    }
     TScontrol_stop_confirmed[0] = false;
     TScontrol_stop_confirmed[1] = false;
     TScontrol_axis_armed[0] = false;
@@ -360,6 +365,7 @@ static void TScontrol_Set_Handover_Complete(void)
 
 static void TScontrol_Set_Transition(main_state_t state)
 {
+    bool e84_accepted = true;
     TScontrol_status.state = state;
     switch (state)
     {
@@ -382,16 +388,19 @@ static void TScontrol_Set_Transition(main_state_t state)
             TScontrol_Set_Axis_Command(main_AXIS_X, main_AXIS_COMMAND_X_MOVE, TScontrol_TRANSFER_STATION);
             break;
         case main_STATE_E84_PREPARE:
-            TSe84_Set_Request(main_E84_REQUEST_PREPARE);
+            e84_accepted = TSe84_Set_Request(main_E84_REQUEST_PREPARE);
             break;
         case main_STATE_WAFER_HANDOVER:
             TScontrol_handover_axis_complete = false;
             TScontrol_load_request_off = false;
-            TSe84_Set_Request(main_E84_REQUEST_BUSY);
-            TScontrol_Set_Axis_Command(main_AXIS_Z, main_AXIS_COMMAND_PLACE, 0U);
+            e84_accepted = TSe84_Set_Request(main_E84_REQUEST_BUSY);
+            if (e84_accepted == true)
+            {
+                TScontrol_Set_Axis_Command(main_AXIS_Z, main_AXIS_COMMAND_PLACE, 0U);
+            }
             break;
         case main_STATE_E84_COMPLETE:
-            TSe84_Set_Request(main_E84_REQUEST_COMPLETE);
+            e84_accepted = TSe84_Set_Request(main_E84_REQUEST_COMPLETE);
             break;
         case main_STATE_INIT:
         case main_STATE_IDLE:
@@ -401,6 +410,11 @@ static void TScontrol_Set_Transition(main_state_t state)
         case main_STATE_STOPPING:
         default:
             break;
+    }
+    if (e84_accepted == false)
+    {
+        TScontrol_Set_Fault_Internal(main_FAULT_INTERLOCK);
+        return;
     }
     TScontrol_Set_Notice(TScontrol_NOTICE_STATUS, main_COMMAND_RESULT_NONE);
     if (TScontrol_status.state == main_STATE_COMPLETE)
@@ -426,6 +440,7 @@ static void TScontrol_Set_Stop(void)
     const main_axis_command_t z = { .axis = main_AXIS_Z, .command = main_AXIS_COMMAND_STOP };
     TSspi_Set_Axis_Command(&x);
     TSspi_Set_Axis_Command(&z);
+    (void)TSe84_Set_Request(main_E84_REQUEST_NONE);
     TScontrol_move.command = main_AXIS_COMMAND_NONE;
     TScontrol_axis_armed[0] = false;
     TScontrol_axis_armed[1] = false;

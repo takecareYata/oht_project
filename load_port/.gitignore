@@ -1,0 +1,8 @@
+# Load Port firmware build outputs
+*.o
+*.elf
+*.bin
+*.map
+*.dmp
+__dump.txt
+__dump_all.txt

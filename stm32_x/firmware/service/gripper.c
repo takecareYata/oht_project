@@ -74,11 +74,23 @@ void gripper_Set_Update(void)
                 gripper_holding = true;
                 gripper_Set_Result(CONTROL_DONE, CONTROL_OK);
             }
+#if CONFIG_Z_TIMED == 2U
+            /* Z 백도어(버튼 모드): CLOSE_STEPS까지만 닫고 그 자리에서 B1을 기다린다.
+             * 대기 제한은 CONFIG_MOVE_TIMEOUT_MS (넘으면 GRIP 고장). */
+            else if (elapsed >= CONFIG_MOVE_TIMEOUT_MS)
+            {
+                gripper_Set_Result(CONTROL_ERROR, CONTROL_ERR_GRIP);
+            }
+            else if (gripstep_Get_Position() >= (int32_t)CONFIG_GRIP_CLOSE_STEPS)
+            {
+            }
+#else
             else if ((elapsed >= CONFIG_GRIP_TIMEOUT_MS) ||
                      (gripstep_Get_Position() >= (int32_t)CONFIG_GRIP_CLOSE_MAX_STEPS))
             {
                 gripper_Set_Result(CONTROL_ERROR, CONTROL_ERR_GRIP);
             }
+#endif
             else if (step_due)
             {
                 gripper_last = now;

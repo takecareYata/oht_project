@@ -13,8 +13,8 @@
 /* ---- 단계별 타임아웃 (임시값, Z축 실측 후 재결정) ---- */
 #define E84_TP1_MS      (2000U)    /* L_REQ/U_REQ ON  -> TR_REQ ON */
 #define E84_TP2_MS      (2000U)    /* READY ON        -> BUSY ON */
-#define E84_TP3_MS      (30000U)   /* BUSY ON         -> 안착/제거 판정 */
-#define E84_TP4_MS      (30000U)   /* L_REQ/U_REQ OFF -> BUSY OFF, TR_REQ OFF, COMPT ON */
+#define E84_TP3_MS      (40000U)   /* BUSY ON         -> 안착/제거 판정 */
+#define E84_TP4_MS      (50000U)   /* L_REQ/U_REQ OFF -> BUSY OFF, TR_REQ OFF, COMPT ON */
 #define E84_TP5_MS      (2000U)    /* READY OFF       -> VALID, CS_0, COMPT OFF */
 
 #define E84_SAMPLE_MS   (1U)       /* 입력 샘플 주기 (2회 연속 동일 시 반영) */

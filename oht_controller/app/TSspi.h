@@ -33,7 +33,7 @@
 #endif
 /* 물리 핀 MOSI=19, MISO=21, SCLK=23, X CS0=24, Z CS1=26. */
 #ifndef TSspi_SPEED_HZ
-#define TSspi_SPEED_HZ (1000000U)
+#define TSspi_SPEED_HZ (100000U)
 #endif
 #ifndef TSspi_MODE
 #define TSspi_MODE (0U)
@@ -46,7 +46,7 @@
 #endif
 #define TSspi_BITS_PER_WORD (8U)
 #define TSspi_LOOP_MS (10U)
-#define TSspi_POLL_MS (100U)
+#define TSspi_POLL_MS (50U)
 #define TSspi_RESPONSE_TIMEOUT_MS (500U)
 #define TSspi_HEARTBEAT_TIMEOUT_MS (1000U)
 #define TSspi_REMOTE_TIMEOUT_MS (300U)
@@ -63,6 +63,13 @@
 #define TSspi_DEBUG_TEXT_SIZE (384U)
 #endif
 #define TSspi_CRC_OFFSET (22U)
+/* 정상 헤더의 수신 CRC 비교를 제어한다. 헤더 복원 시에는 항상 검사한다. */
+#ifndef TSspi_RX_CRC_CHECK_ENABLED
+#define TSspi_RX_CRC_CHECK_ENABLED (0)
+#endif
+#if (TSspi_RX_CRC_CHECK_ENABLED != 0) && (TSspi_RX_CRC_CHECK_ENABLED != 1)
+#error "TSspi_RX_CRC_CHECK_ENABLED must be 0 or 1"
+#endif
 #define TSspi_REQUEST_MAGIC (0xA5U)
 #define TSspi_RESPONSE_MAGIC (0x5AU)
 #define TSspi_VERSION (2U)
@@ -72,6 +79,16 @@
 #ifndef TSspi_STATION_COUNT
 #define TSspi_STATION_COUNT (2U)
 #endif
+
+typedef enum
+{
+    TSspi_RESPONSE_VALID = 0,
+    TSspi_RESPONSE_BAD_MAGIC,
+    TSspi_RESPONSE_BAD_VERSION,
+    TSspi_RESPONSE_BAD_AXIS,
+    TSspi_RESPONSE_BAD_FIELDS,
+    TSspi_RESPONSE_BAD_CRC
+} TSspi_response_result_t;
 
 /* ==================== wire 코드 ==================== */
 typedef enum

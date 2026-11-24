@@ -48,14 +48,14 @@ build/check/%.o: %.c Makefile | build/check
 build/check:
 	mkdir -p $@
 
-# 실물 open/ioctl/시간 함수를 교체한 SPI v2 + 중앙 FSM 통합 시험.
+# 네트워크, 실물 SPI 및 시간 함수를 대체한 TCP/FSM/SPI 통합 시험.
 test: build/test_tsspi build/test_tcp_stop build/test_spi_debug
 	./build/test_tsspi
 	./build/test_tcp_stop
 	./build/test_spi_debug
 
-build/test_tsspi: ../test/test_tsspi.c TSspi.c TSspi.h TScontrol.c TScontrol.h main.h TStcp.h TSe84.h Makefile | build
-	$(CC) $(CPPFLAGS) -std=c99 -O1 -g -Wall -Wextra -Werror -pthread -fsanitize=undefined $< -Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=ioctl -Wl,--wrap=clock_gettime -Wl,--wrap=nanosleep -o $@
+build/test_tsspi: ../test/test_tsspi.c TSspi.c TSspi.h TScontrol.c TScontrol.h main.h TStcp.c TStcp.h TSe84.h Makefile | build
+	$(CC) $(CPPFLAGS) -UTStcp_DEBUG_ENABLED -DTStcp_DEBUG_ENABLED=0 -std=c99 -O1 -g -Wall -Wextra -Werror -pthread -fsanitize=undefined $< -Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=ioctl -Wl,--wrap=clock_gettime -Wl,--wrap=nanosleep -Wl,--wrap=send -o $@
 
 build/test_tcp_stop: ../test/test_tcp_stop.c TStcp.c TStcp.h TScontrol.h main.h Makefile | build
 	$(CC) $(CPPFLAGS) -DTStcp_DEBUG_ENABLED=0 -std=c99 -O1 -g -Wall -Wextra -Werror -pthread -fsanitize=undefined ../test/test_tcp_stop.c TStcp.c -o $@

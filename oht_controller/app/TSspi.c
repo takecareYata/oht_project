@@ -48,8 +48,9 @@ static bool TSspi_Check_Timeout(TSspi_axis_context_t * axis, uint64_t now);
 static void TSspi_Set_Publish(TSspi_axis_context_t * axis, main_axis_event_t event, main_axis_command_code_t command);
 static void TSspi_Set_Receipt(TSspi_axis_context_t * axis, const TSspi_response_t * response);
 static void TSspi_Set_Request(const TSspi_request_t * frame, uint8_t * bytes);
-static bool TSspi_Get_Response(const uint8_t * bytes, TSspi_response_t * frame);
-static bool TSspi_Check_Response(const TSspi_response_t * frame);
+static TSspi_response_result_t TSspi_Get_Response(const uint8_t * bytes, TSspi_response_t * frame);
+static TSspi_response_result_t TSspi_Get_Axis_Response(const TSspi_axis_context_t * axis, const uint8_t * bytes, TSspi_response_t * frame);
+static TSspi_response_result_t TSspi_Check_Response(const TSspi_response_t * frame);
 static void TSspi_Set_U16(uint16_t value, uint8_t * bytes);
 static uint16_t TSspi_Get_U16(const uint8_t * bytes);
 static void TSspi_Set_U32(uint32_t value, uint8_t * bytes);
@@ -67,6 +68,7 @@ static bool TSspi_debug_ready; /* SPI 태스크만 읽고 쓴다. */
 static void TSspi_Debug_Init(void);
 static void * TSspi_Debug_Task(void * argument);
 static void TSspi_Debug_Event(const TSspi_axis_context_t * axis, const char * message, uint32_t detail, const uint8_t * bytes);
+static void TSspi_Debug_Response_Error(const TSspi_axis_context_t * axis, TSspi_response_result_t result, const uint8_t * bytes);
 static bool TSspi_Debug_Get(TSspi_debug_entry_t * entry);
 static void TSspi_Debug_Print(const TSspi_debug_entry_t * entry);
 static void TSspi_Debug_Text(char * text, size_t * length, const char * value);
@@ -174,6 +176,31 @@ static void TSspi_Debug_Event(const TSspi_axis_context_t * axis, const char * me
     (void)pthread_mutex_unlock(&TSspi_debug_mutex);
 }
 
+static void TSspi_Debug_Response_Error(const TSspi_axis_context_t * axis, TSspi_response_result_t result, const uint8_t * bytes)
+{
+    switch (result)
+    {
+        case TSspi_RESPONSE_BAD_MAGIC:
+            TSspi_Debug_Event(axis, "RX magic mismatch", bytes[0], bytes);
+            break;
+        case TSspi_RESPONSE_BAD_VERSION:
+            TSspi_Debug_Event(axis, "RX version mismatch", bytes[1], bytes);
+            break;
+        case TSspi_RESPONSE_BAD_AXIS:
+            TSspi_Debug_Event(axis, "RX axis invalid", bytes[2], bytes);
+            break;
+        case TSspi_RESPONSE_BAD_FIELDS:
+            TSspi_Debug_Event(axis, "RX fields invalid", 0U, bytes);
+            break;
+        case TSspi_RESPONSE_BAD_CRC:
+            TSspi_Debug_Event(axis, "RX CRC mismatch", TSspi_Get_U16(&bytes[TSspi_CRC_OFFSET]), bytes);
+            break;
+        case TSspi_RESPONSE_VALID:
+        default:
+            break;
+    }
+}
+
 static bool TSspi_Debug_Get(TSspi_debug_entry_t * entry)
 {
     bool available = false;
@@ -233,6 +260,8 @@ static void TSspi_Debug_Print(const TSspi_debug_entry_t * entry)
     TSspi_Debug_Value(text, &length, " hb=", entry->heartbeat);
     if (entry->has_bytes == true)
     {
+        TSspi_Debug_Value(text, &length, " wire_crc=", TSspi_Get_U16(&entry->bytes[TSspi_CRC_OFFSET]));
+        TSspi_Debug_Value(text, &length, " calc_crc=", TSspi_Get_Crc(entry->bytes, TSspi_CRC_OFFSET));
         TSspi_Debug_Text(text, &length, " bytes=");
         for (index = 0U; index < TSspi_FRAME_SIZE; ++index)
         {
@@ -262,14 +291,20 @@ static void TSspi_Debug_Text(char * text, size_t * length, const char * value)
 static void TSspi_Debug_Value(char * text, size_t * length, const char * label, uint32_t value)
 {
     const char digits[] = "0123456789ABCDEF";
-    char hex[11] = { '0', 'x', '0', '0', '0', '0', '0', '0', '0', '0', '\0' };
-    uint32_t index;
-    for (index = 0U; index < 8U; ++index)
+    char hex[9] = { '\0' };
+    size_t index = sizeof(hex) - 1U;
+    uint32_t remaining = value;
+
+    do
     {
-        hex[index + 2U] = digits[(value >> ((7U - index) * 4U)) & 0x0FU];
-    }
+        --index;
+        hex[index] = digits[remaining & 0x0FU];
+        remaining >>= 4U;
+    } while (remaining != 0U);
+
     TSspi_Debug_Text(text, length, label);
-    TSspi_Debug_Text(text, length, hex);
+    TSspi_Debug_Text(text, length, "0x");
+    TSspi_Debug_Text(text, length, &hex[index]);
 }
 
 static void TSspi_Debug_Write(const char * text, size_t length)
@@ -299,6 +334,7 @@ static void TSspi_Debug_Write(const char * text, size_t length)
 #else
 #define TSspi_Debug_Init() ((void)0)
 #define TSspi_Debug_Event(axis, message, detail, bytes) ((void)0)
+#define TSspi_Debug_Response_Error(axis, result, bytes) ((void)0)
 #endif /* TSspi_DEBUG_ENABLED */
 
 /* ==================== 1. 명령 하나 처리 / 양축 NOP 조회 ==================== */
@@ -381,7 +417,7 @@ void TSspi_Parse(const TSspi_response_t * response)
     {
         return;
     }
-    if (TSspi_Check_Response(response) == false)
+    if (TSspi_Check_Response(response) != TSspi_RESPONSE_VALID)
     {
         return;
     }
@@ -416,8 +452,13 @@ void TSspi_Parse(const TSspi_response_t * response)
     }
     if (axis->synced == false)
     {
-        axis->seq = response->ack_seq;
-        axis->synced = true;
+        /* 동기화 전에 보낸 STOP은 그 요청의 ACK를 받을 때 번호를 맞춘다. */
+        if ((axis->pending == TSspi_PENDING_NONE) ||
+            (response->ack_seq == axis->request.seq))
+        {
+            axis->seq = response->ack_seq;
+            axis->synced = true;
+        }
     }
     axis->valid_response = true;
     axis->last_response_ms = now;
@@ -455,7 +496,7 @@ void TSspi_Parse(const TSspi_response_t * response)
     }
 
 #if TSspi_DEBUG_ENABLED
-    if (was_synced == false)
+    if ((was_synced == false) && (axis->synced == true))
     {
         TSspi_Debug_Event(axis, "seq synchronized", response->ack_seq, NULL);
     }
@@ -749,43 +790,45 @@ static void TSspi_Set_Poll(TSspi_axis_context_t * axis)
     axis->last_poll_ms = now;
     if (axis->stop_required == true)
     {
-        if (axis->synced == true)
+        if (axis->command != main_AXIS_COMMAND_STOP)
         {
-            if (axis->command != main_AXIS_COMMAND_STOP)
-            {
-                axis->pending = TSspi_PENDING_NONE;
-            }
-            if (axis->pending == TSspi_PENDING_NONE)
+            axis->pending = TSspi_PENDING_NONE;
+        }
+        if (axis->pending == TSspi_PENDING_NONE)
+        {
+            if (axis->synced == true)
             {
                 TSspi_Set_Start(axis, main_AXIS_COMMAND_STOP, TSspi_CMD_STOP, 0U, now);
             }
             else
             {
-                /* STOP만 같은 seq로 반복 가능. 일반 작업은 NOP로만 확인한다. */
-                if (TSspi_Set_Exchange(axis, &axis->request) == false)
+                (void)TSspi_Set_Exchange(axis, &nop);
+                /* 응답이 깨져도 보유 번호로 STOP 송신을 시도한다. */
+                if ((axis->synced == false) &&
+                    (axis->device != TSspi_INVALID_DEVICE))
                 {
-                    TSspi_Set_Fault(axis);
+                    TSspi_Set_Start(axis, main_AXIS_COMMAND_STOP, TSspi_CMD_STOP, 0U, now);
                 }
             }
         }
-        else
+        else if (TSspi_Set_Exchange(axis, &nop) == false)
         {
-            if (TSspi_Set_Exchange(axis, &nop) == false)
-            {
-                /* 응답이 깨져도 STOP 송신은 시도한다. MCU는 STOP의 seq 검사를 우회한다.
-                 * 확인 응답 없이는 stopped로 판단하지 않는다. */
-                TSspi_Set_Start(axis, main_AXIS_COMMAND_STOP, TSspi_CMD_STOP, 0U, now);
-            }
+            TSspi_Set_Fault(axis);
         }
-    }
-    else
-    {
-        if (TSspi_Set_Exchange(axis, &nop) == false)
+        else if (axis->pending == TSspi_PENDING_RECEIPT)
         {
-            if (axis->pending == TSspi_PENDING_RECEIPT)
+            /* NOP에서 아직 접수가 확인되지 않은 STOP은 같은 번호로 다시 보낸다. */
+            if (TSspi_Set_Exchange(axis, &axis->request) == false)
             {
                 TSspi_Set_Fault(axis);
             }
+        }
+    }
+    else if (TSspi_Set_Exchange(axis, &nop) == false)
+    {
+        if (axis->pending == TSspi_PENDING_RECEIPT)
+        {
+            TSspi_Set_Fault(axis);
         }
     }
     if (TSspi_Get_Time(&now) == true)
@@ -1069,11 +1112,11 @@ static void TSspi_Set_Publish(TSspi_axis_context_t * axis, main_axis_event_t eve
     TScontrol_Set_Axis_Event(axis->axis, event, &axis->status);
 }
 
-/* ==================== 5. Linux 장치와 2단계 교환 ==================== */
+/* ==================== 5. Linux 장치와 프레임 교환 ==================== */
 static void TSspi_Set_Open(TSspi_axis_context_t * axis, uint64_t now)
 {
     const char * path = (axis->axis == main_AXIS_X) ? TSspi_X_DEVICE : TSspi_Z_DEVICE;
-    const uint8_t mode = TSspi_MODE;
+    const uint32_t mode = TSspi_MODE;
     const uint8_t bits = TSspi_BITS_PER_WORD;
     const uint8_t lsb_first = 0U;
     const uint32_t speed = TSspi_SPEED_HZ;
@@ -1089,21 +1132,21 @@ static void TSspi_Set_Open(TSspi_axis_context_t * axis, uint64_t now)
         TSspi_Set_Fault(axis);
         return;
     }
-    if (ioctl(axis->device, SPI_IOC_WR_MODE, &mode) < 0)
+    if (ioctl(axis->device, SPI_IOC_WR_MODE32, &mode) < 0)
     {
-        TSspi_Debug_Event(axis, "SPI_IOC_WR_MODE failed (detail=errno)", (uint32_t)errno, NULL);
-        TSspi_Set_Fault(axis);
-        return;
-    }
-    if (ioctl(axis->device, SPI_IOC_WR_LSB_FIRST, &lsb_first) < 0)
-    {
-        TSspi_Debug_Event(axis, "SPI_IOC_WR_LSB_FIRST failed (detail=errno)", (uint32_t)errno, NULL);
+        TSspi_Debug_Event(axis, "SPI_IOC_WR_MODE32 failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
     if (ioctl(axis->device, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0)
     {
         TSspi_Debug_Event(axis, "SPI_IOC_WR_BITS_PER_WORD failed (detail=errno)", (uint32_t)errno, NULL);
+        TSspi_Set_Fault(axis);
+        return;
+    }
+    if (ioctl(axis->device, SPI_IOC_WR_LSB_FIRST, &lsb_first) < 0)
+    {
+        TSspi_Debug_Event(axis, "SPI_IOC_WR_LSB_FIRST failed (detail=errno)", (uint32_t)errno, NULL);
         TSspi_Set_Fault(axis);
         return;
     }
@@ -1127,10 +1170,11 @@ static void TSspi_Set_Open(TSspi_axis_context_t * axis, uint64_t now)
     TSspi_Debug_Event(axis, "device opened", TSspi_SPEED_HZ, NULL);
 }
 
+/* 한 번의 SPI 전송 결과를 반환한다. 잘못된 응답은 버리고 다음 NOP에서 다시 읽는다. */
 static bool TSspi_Set_Exchange(TSspi_axis_context_t * axis, const TSspi_request_t * request)
 {
-    const TSspi_request_t nop = { .cmd = TSspi_CMD_NOP };
     TSspi_response_t response;
+    TSspi_response_result_t result;
     uint8_t rx[TSspi_FRAME_SIZE];
     if (pthread_mutex_lock(&TSspi_mutex) == 0)
     {
@@ -1141,24 +1185,24 @@ static bool TSspi_Set_Exchange(TSspi_axis_context_t * axis, const TSspi_request_
     {
         return false;
     }
-    if (TSspi_Set_Transfer(axis, &nop, rx) == false)
+    /* 명령의 접수 여부는 이후 NOP 응답의 ack_seq로 확인한다. */
+    if (request->cmd != TSspi_CMD_NOP)
     {
-        return false;
+        return true;
     }
-    if (TSspi_Get_Response(rx, &response) == false)
+    result = TSspi_Get_Axis_Response(axis, rx, &response);
+    if (result != TSspi_RESPONSE_VALID)
     {
-#if TSspi_DEBUG_ENABLED
-        const uint16_t expected_crc = TSspi_Get_Crc(rx, TSspi_CRC_OFFSET);
-        TSspi_Debug_Event(axis, (response.crc != expected_crc) ? "RX CRC mismatch (detail=expected CRC)" : "RX header/fields invalid (detail=expected CRC)", expected_crc, rx);
-#endif
-        return false;
+        TSspi_Debug_Response_Error(axis, result, rx);
     }
-    if (response.axis != (uint8_t)axis->axis)
+    else if (response.axis != (uint8_t)axis->axis)
     {
         TSspi_Debug_Event(axis, "RX axis mismatch (detail=received axis)", response.axis, rx);
-        return false;
     }
-    TSspi_Parse(&response);
+    else
+    {
+        TSspi_Parse(&response);
+    }
     return true;
 }
 
@@ -1168,10 +1212,7 @@ static bool TSspi_Set_Transfer(TSspi_axis_context_t * axis, const TSspi_request_
     uint8_t tx[TSspi_FRAME_SIZE];
     int result;
     const struct spi_ioc_transfer transfer = { .tx_buf = (uint64_t)(uintptr_t)tx, .rx_buf = (uint64_t)(uintptr_t)rx, .len = TSspi_FRAME_SIZE, .speed_hz = TSspi_SPEED_HZ, .bits_per_word = TSspi_BITS_PER_WORD };
-    /* STM32는 NSS 상승에서 DMA를 다시 준비한다. 요청/NOP 사이뿐 아니라
-     * 직전 교환의 마지막 NOP와 다음 요청 사이에도 CS HIGH 시간을 확보한다.
-     * 이 태스크만 SPI를 사용하며 이전 ioctl 반환 후 최소 1ms 대기한다.
-     */
+    /* STM32의 NSS 상승 후 DMA 재준비를 위해 이전 ioctl 반환 후 최소 1ms 대기한다. */
     TSspi_Set_Delay(TSspi_RESPONSE_DELAY_US);
     request.magic = TSspi_REQUEST_MAGIC;
     request.version = TSspi_VERSION;
@@ -1364,9 +1405,10 @@ static void TSspi_Set_Request(const TSspi_request_t * frame, uint8_t * bytes)
     TSspi_Set_U16(TSspi_Get_Crc(bytes, TSspi_CRC_OFFSET), &bytes[22]);
 }
 
-static bool TSspi_Get_Response(const uint8_t * bytes, TSspi_response_t * frame)
+static TSspi_response_result_t TSspi_Get_Response(const uint8_t * bytes, TSspi_response_t * frame)
 {
     uint32_t position = TSspi_Get_U32(&bytes[12]);
+    TSspi_response_result_t result;
     frame->magic = bytes[0];
     frame->version = bytes[1];
     frame->axis = bytes[2];
@@ -1382,81 +1424,116 @@ static bool TSspi_Get_Response(const uint8_t * bytes, TSspi_response_t * frame)
     frame->reserved0 = bytes[17];
     frame->heartbeat = TSspi_Get_U16(&bytes[18]);
     frame->reserved1 = TSspi_Get_U16(&bytes[20]);
-    frame->crc = TSspi_Get_U16(&bytes[22]);
+    frame->crc = TSspi_Get_U16(&bytes[TSspi_CRC_OFFSET]);
+    result = TSspi_Check_Response(frame);
+    if (result != TSspi_RESPONSE_VALID)
+    {
+        return result;
+    }
+#if TSspi_RX_CRC_CHECK_ENABLED
     if (frame->crc != TSspi_Get_Crc(bytes, TSspi_CRC_OFFSET))
     {
-        return false;
+        return TSspi_RESPONSE_BAD_CRC;
     }
-    return TSspi_Check_Response(frame);
+#endif
+    return TSspi_RESPONSE_VALID;
 }
 
-static bool TSspi_Check_Response(const TSspi_response_t * frame)
+static TSspi_response_result_t TSspi_Get_Axis_Response(const TSspi_axis_context_t * axis, const uint8_t * bytes, TSspi_response_t * frame)
+{
+    const uint8_t expected_axis = (uint8_t)axis->axis;
+    const bool header_matches = (bytes[0] == TSspi_RESPONSE_MAGIC) &&
+                                (bytes[1] == TSspi_VERSION);
+    uint8_t restored[TSspi_FRAME_SIZE];
+    TSspi_response_result_t result;
+    size_t index;
+    if ((header_matches == true) && (bytes[2] == expected_axis))
+    {
+        return TSspi_Get_Response(bytes, frame);
+    }
+    /* 벤치와 같이 MISO 활성화가 늦을 때 손실될 수 있는 고정 헤더만 복원한다. */
+    restored[0] = TSspi_RESPONSE_MAGIC;
+    restored[1] = TSspi_VERSION;
+    restored[2] = expected_axis;
+    for (index = 3U; index < TSspi_FRAME_SIZE; ++index)
+    {
+        restored[index] = bytes[index];
+    }
+    if (TSspi_Get_U16(&restored[TSspi_CRC_OFFSET]) != TSspi_Get_Crc(restored, TSspi_CRC_OFFSET))
+    {
+        return TSspi_Get_Response(bytes, frame);
+    }
+    result = TSspi_Get_Response(restored, frame);
+    if (result == TSspi_RESPONSE_VALID)
+    {
+        TSspi_Debug_Event(axis, "RX header restored (detail=raw header)", ((uint32_t)bytes[0] << 16U) | ((uint32_t)bytes[1] << 8U) | (uint32_t)bytes[2], restored);
+    }
+    return result;
+}
+
+static TSspi_response_result_t TSspi_Check_Response(const TSspi_response_t * frame)
 {
     if (frame->magic != TSspi_RESPONSE_MAGIC)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_MAGIC;
     }
     if (frame->version != TSspi_VERSION)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_VERSION;
     }
-    if (frame->axis < 1U)
+    if ((frame->axis < 1U) || (frame->axis > 2U))
     {
-        return false;
-    }
-    if (frame->axis > 2U)
-    {
-        return false;
+        return TSspi_RESPONSE_BAD_AXIS;
     }
     if (frame->reserved0 != 0U)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     if (frame->reserved1 != 0U)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     if (frame->state > TSspi_STATE_FAULT)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     if (frame->receipt > TSspi_ERROR_TRANSPORT)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     if (frame->fault > TSspi_ERROR_TRANSPORT)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     if (frame->pos_src > 3U)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     if ((frame->sensors & 0xF8U) != 0U)
     {
-        return false;
+        return TSspi_RESPONSE_BAD_FIELDS;
     }
     /* pos_src=0이면 위치값을 해석하지 않는다. 완료에는 위치를 사용하지 않는다. */
     if (frame->pos_src != 0U)
     {
         if (frame->position < 0)
         {
-            return false;
+            return TSspi_RESPONSE_BAD_FIELDS;
         }
         if (frame->position > 1000)
         {
-            return false;
+            return TSspi_RESPONSE_BAD_FIELDS;
         }
     }
     if (frame->pos_src == 1U)
     {
         if (frame->position == 0)
         {
-            return false;
+            return TSspi_RESPONSE_BAD_FIELDS;
         }
         if (frame->position == 1000)
         {
-            return false;
+            return TSspi_RESPONSE_BAD_FIELDS;
         }
     }
     if (frame->pos_src == 2U)
@@ -1465,11 +1542,11 @@ static bool TSspi_Check_Response(const TSspi_response_t * frame)
         {
             if (frame->position != 1000)
             {
-                return false;
+                return TSspi_RESPONSE_BAD_FIELDS;
             }
         }
     }
-    return true;
+    return TSspi_RESPONSE_VALID;
 }
 
 uint16_t TSspi_Get_Crc(const uint8_t * bytes, size_t length)

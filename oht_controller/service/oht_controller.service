@@ -1,0 +1,15 @@
+[Unit]
+Description=OHT Controller
+After=network.target
+
+[Service]
+Type=exec
+User=aidl
+SupplementaryGroups=gpio
+ExecStart=/usr/bin/oht_controller
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -71,6 +71,14 @@ loadportStatus Loadport_Get_Status(void)
     return loadportConfirmed;
 }
 
+/* 센서 현재 판정이 정상인지 : 최근 측정이 연속 3회 같은 유효값이고 확정값과 일치 (보류 구간 아님) */
+bool Loadport_Get_Stable(void)
+{
+    return ((loadportCandidate != LOADPORT_STATUS_UNKNOWN) &&
+            (loadportCandidate == loadportConfirmed) &&
+            (loadportSameCount >= LOADPORT_CONFIRM_COUNT));
+}
+
 bool Loadport_Get_Seat(void)
 {
     return loadportSeated;

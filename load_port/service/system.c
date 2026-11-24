@@ -2,8 +2,8 @@
  * @file    system.c
  * @brief   [L3 Service] Fault 관리 및 Watchdog
  * @details - Fault : 최초 원인 1개를 래치(latch)
- *          - 추후 결정 : Fault 복구 방법 (System_Clear_Fault 호출 위치),
- *                        IWDG 사용 여부 (아래 Watchdog 함수 내용)
+ *          - Fault 해제 : e84.c FAULT 상태에서 입력 전체 OFF 1초 유지 시 호출 (Jetson RECOVER)
+ *          - 추후 결정 : IWDG 사용 여부 (아래 Watchdog 함수 내용)
  */
 #include "system.h"
 
@@ -34,7 +34,7 @@ systemError System_Get_Fault(void)
     return systemFaultCode;
 }
 
-/* 추후 결정 : 호출 위치 미정 (현재는 MCU 리셋으로만 Fault 해제) */
+/* Fault 해제 : e84.c 복구 요청 처리에서 호출 (MCU 리셋으로도 해제됨) */
 void System_Clear_Fault(void)
 {
     systemFaultCode = SYSTEM_ERR_NONE;

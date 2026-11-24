@@ -19,6 +19,13 @@
 
 #define E84_SAMPLE_MS   (1U)       /* 입력 샘플 주기 (2회 연속 동일 시 반영) */
 
+/* ---- Fault 복구 (Jetson 중앙제어 RECOVER 방식에 맞춤) ----
+ * Jetson RECOVER : TScontrol_Set_Recovery() -> TSe84 IDLE -> E84 출력 5개 모두 LOW
+ * Load Port      : Fault 상태에서 Active 입력 5개가 모두 OFF로 1초 이상 유지 + 센서 현재 판정 정상
+ *                  -> Fault 해제 -> HO_AVBL ON -> IDLE
+ * Jetson은 다음 핸드셰이크 전에 HO_AVBL = 1을 확인해야 한다. (LP 복구까지 약 1초) */
+#define E84_RECOVER_MS  (1000U)
+
 typedef enum
 {
     E84_STATE_IDLE = 0,

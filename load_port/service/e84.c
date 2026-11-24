@@ -13,6 +13,10 @@
  *          Fault
  *            타임아웃 또는 순서 위반 -> L_REQ, U_REQ, READY, HO_AVBL OFF
  *            (ES는 STM32③에 E-STOP 입력이 없어 ON 유지)
+ *          Fault 복구 (Jetson 중앙제어 RECOVER 방식)
+ *            Jetson : RECOVER -> E84 출력 5개 모두 LOW
+ *            LP     : 입력 5개 모두 OFF가 1초 유지 + 센서 현재 판정 정상(보류 구간 아님)
+ *                     -> Fault 해제, HO_AVBL ON, IDLE
  */
 #include "e84.h"
 #include "pio.h"
@@ -28,6 +32,8 @@ static uint8_t  e84Input       = 0U;   /* 디바운스된 입력 */
 static uint8_t  e84PrevRaw     = 0U;
 static uint32_t e84SampleTick  = 0U;
 static uint32_t e84StateTick   = 0U;
+static bool     e84RecoverHold = false;   /* Fault 중 입력 전체 OFF 유지 중 */
+static uint32_t e84RecoverTick = 0U;      /* 입력 전체 OFF 시작 시각 */
 
 static void        E84_Set_State(e84State nextState);
 static bool        E84_Get_Bit(uint8_t inMask);
@@ -226,11 +232,31 @@ void E84_Run_Fsm(void)
                 break;
 
             case E84_STATE_FAULT:
-                /* Fault 해제(System_Clear_Fault) 시 인계 가능 상태로 복귀 */
-                if (System_Get_Fault() == SYSTEM_ERR_NONE)
+                /* 복구 : 입력 5개가 모두 OFF인 상태로 E84_RECOVER_MS 유지 + 센서 현재 판정 정상 */
+                if (e84Input == 0U)
                 {
-                    E84_Set_Output(PIO_OUT_HO_AVBL, true);
-                    E84_Set_State(E84_STATE_IDLE);
+                    if (e84RecoverHold == false)
+                    {
+                        e84RecoverHold = true;
+                        e84RecoverTick = Tick_Get_Ms();
+                    }
+                    else if (((Tick_Get_Ms() - e84RecoverTick) >= E84_RECOVER_MS) &&
+                             (Loadport_Get_Stable() == true))
+                    {
+                        System_Clear_Fault();
+                        e84RecoverHold = false;
+                        e84CurMode     = E84_MODE_NONE;
+                        E84_Set_Output(PIO_OUT_HO_AVBL, true);
+                        E84_Set_State(E84_STATE_IDLE);
+                    }
+                    else
+                    {
+                        /* 유지 시간 또는 센서 판정 대기 */
+                    }
+                }
+                else
+                {
+                    e84RecoverHold = false;   /* 입력이 하나라도 ON이면 처음부터 다시 */
                 }
                 break;
 

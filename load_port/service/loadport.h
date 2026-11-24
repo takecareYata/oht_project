@@ -28,6 +28,7 @@ typedef enum
 void           Loadport_Init_Sensor(void);
 void           Loadport_Run_Sensor(void);
 loadportStatus Loadport_Get_Status(void);
+bool           Loadport_Get_Stable(void);
 bool           Loadport_Get_Seat(void);
 void           Loadport_Set_Clamp(bool on);
 bool           Loadport_Get_Clamp(void);

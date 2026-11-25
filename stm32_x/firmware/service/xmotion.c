@@ -68,8 +68,10 @@ static uint32_t xmotion_Get_Brake(uint16_t rate)
 static void xmotion_Set_Ramp(void)
 {
     uint16_t rate = xmotion_rate;
-    if (xmotion_seek) { return; }
-    if (stepper_Get_Remaining() <= xmotion_Get_Brake(rate))
+    /* 탐색 이동은 목표 펄스가 없어 감속 구간이 없다. HOME_MODE 2(조그)만 최고 속도까지 가속,
+     * HOME_MODE 1은 CONFIG_X_HOME_HZ 저속 고정. */
+    if (xmotion_seek && (CONFIG_X_HOME_MODE != 2U)) { return; }
+    if (!xmotion_seek && (stepper_Get_Remaining() <= xmotion_Get_Brake(rate)))
     {
         rate = (rate > CONFIG_X_START_HZ + CONFIG_X_ACCEL_HZ) ? (uint16_t)(rate - CONFIG_X_ACCEL_HZ)
                                                              : (uint16_t)CONFIG_X_START_HZ;
@@ -181,7 +183,7 @@ void xmotion_Set_Update(void)
             /* 목표 펄스 도달: TIM1 인터럽트가 이미 타이머를 멈춤 */
             xmotion_Set_Done();
         }
-        else if ((uint32_t)(now - xmotion_started) >= CONFIG_MOVE_TIMEOUT_MS)
+        else if ((uint32_t)(now - xmotion_started) >= CONFIG_X_MOVE_TIMEOUT_MS)
         {
             xmotion_Set_Fault(CONTROL_ERR_TIMEOUT);
         }

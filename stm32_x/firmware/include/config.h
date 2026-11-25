@@ -26,14 +26,16 @@
  * CONFIG_X_MICROSTEP은 TB6600 DIP 스위치(SW1~3) 설정(1/2/4/8/16/32)과 반드시 일치시킨다. */
 #define CONFIG_X_MICROSTEP 2U
 #define CONFIG_X_PULSES_PER_REV (200UL * CONFIG_X_MICROSTEP)
-/* A → B 거리(펄스). [미보정] 10회전.
+/* A → B 거리(펄스). 조그 실측 약 59,280펄스(148.2회전) → 148회전 = 59,200.
  * 보정식: 이동거리 mm / 리드 mm/회전 × CONFIG_X_PULSES_PER_REV */
-#define CONFIG_X_TRAVEL_STEPS (10UL * CONFIG_X_PULSES_PER_REV)
+#define CONFIG_X_TRAVEL_STEPS (148UL * CONFIG_X_PULSES_PER_REV)
 /* 원점 방식
  * 0: 센서 없음. 전원 인가 시 위치 0(= A)이라고 가정 → 켜기 전에 캐리지를 손으로 A에 둘 것.
  *    X_MOVE 0/1 = 스텝 0 / TRAVEL_STEPS로 이동.
  * 1: PC0 Home 센서 사용. 센서를 보기 전에는 위치 모름 → RECOVER(또는 X_MOVE 0)가
  *    CONFIG_X_HOME_HZ 저속으로 A를 찾아 그 자리를 0으로 잡는다.
+ * 2: 1과 같지만 탐색 이동도 CONFIG_X_STEP_HZ까지 가속 (센서 없는 조그 시험용, `make X_HOME=2`).
+ *    감속 없이 STOP/센서에서 바로 멈추므로 센서를 단 상태로 쓰지 말 것.
  * 두 방식 모두 A/B 센서가 감지되면 멈추고 위치를 보정하므로, 센서를 나중에 달아도
  * 코드 변경이 필요 없다. */
 #ifndef CONFIG_X_HOME_MODE
@@ -54,7 +56,8 @@
 #define CONFIG_Z_TRAVEL_MS 10000UL        /* [미보정] Z 전체 스트로크 시간 (위치 표시용 추정) */
 #define CONFIG_CLOCK_HZ 16000000UL        /* 코어 클록: 리셋 기본 HSI 16 MHz, PLL 없음 */
 #define CONFIG_COMM_TIMEOUT_MS 500UL      /* ARM 중 유효 요청이 이만큼 없으면 LINK 정지 */
-#define CONFIG_MOVE_TIMEOUT_MS 15000UL    /* X·Z 이동 최대 시간 → 넘으면 TIMEOUT */
+#define CONFIG_MOVE_TIMEOUT_MS 15000UL    /* Z 이동·집게 대기 최대 시간 → 넘으면 TIMEOUT */
+#define CONFIG_X_MOVE_TIMEOUT_MS 30000UL  /* X 이동 최대 시간 (A→B 약 15.3 s @ 4000 Hz) */
 #define CONFIG_RELEASE_TIMEOUT_MS 1500UL  /* 출발 센서가 이 시간 뒤에도 감지 → SENSOR */
 #define CONFIG_SENSOR_DEBOUNCE_MS 10UL    /* 센서 값이 이만큼 안정돼야 반영 */
 #define CONFIG_GRIP_TIMEOUT_MS 3000UL     /* 집게 열기/닫기 최대 시간 → 넘으면 GRIP */
@@ -88,7 +91,7 @@
 /* ──────────── X 속도 (TB6600 PUL 입력 기준 Hz) ────────────
  * 최고 속도 = 기준 코드의 STEP_US. 기준 코드는 1000 Hz로 바로 시작하지만, 여기서는
  * 절반 속도로 출발해 약 250 ms 동안 가속하고, 목표 펄스 전에 감속한다. */
-#define CONFIG_X_STEP_US 1000U
+#define CONFIG_X_STEP_US 250U /* [이전 1000 → 500 → 400] 최고 4000 Hz, 시작·조그 2000 Hz */
 #define CONFIG_X_STEP_HZ (1000000U / CONFIG_X_STEP_US)
 #define CONFIG_X_START_HZ (CONFIG_X_STEP_HZ / 2U)
 #define CONFIG_X_ACCEL_HZ 40U /* CONFIG_X_ACCEL_INTERVAL_MS마다 더하고 빼는 Hz */
